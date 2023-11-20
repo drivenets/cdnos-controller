@@ -47,11 +47,49 @@ type CdnosReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.16.3/pkg/reconcile
 func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
 	cdnos := &cdnosv1.Cdnos{}
 	if err := r.Get(ctx, req.NamespacedName, cdnos); err != nil {
+		log.Error(err, "unable to fetch Cdnos")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	secret, err := r.reconcileSecrets(ctx, cdnos)
+	if err != nil {
+		log.Error(err, "unable to get reconcile secret")
+		return ctrl.Result{}, err
+	}
+
+	var secretName string
+	if secret != nil {
+		secretName = secret.GetName()
+	}
+
+	pod, err := r.reconcilePod(ctx, cdnos, secretName)
+	if err != nil {
+		log.Error(err, "unable to get reconcile pod")
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileService(ctx, cdnos); err != nil {
+		log.Error(err, "unable to get reconcile service: %v")
+		return ctrl.Result{}, err
+	}
+
+	switch pod.Status.Phase {
+	case corev1.PodRunning:
+		cdnos.Status.Phase = cdnosv1.Running
+	case corev1.PodFailed:
+		cdnos.Status.Phase = cdnosv1.Failed
+	default:
+		cdnos.Status.Phase = cdnosv1.Unknown
+	}
+
+	cdnos.Status.Message = fmt.Sprintf("Pod Details: %s", pod.Status.Message)
+	if err := r.Status().Update(ctx, cdnos); err != nil {
+		log.Error(err, "unable to update cdnos status")
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
