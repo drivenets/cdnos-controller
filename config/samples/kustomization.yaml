@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- cdnos_v1_cdnos.yaml
+#+kubebuilder:scaffold:manifestskustomizesamples

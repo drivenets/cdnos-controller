@@ -1,0 +1,12 @@
+apiVersion: cdnos.dev.drivenets.net/v1
+kind: Cdnos
+metadata:
+  labels:
+    app.kubernetes.io/name: cdnos
+    app.kubernetes.io/instance: cdnos-sample
+    app.kubernetes.io/part-of: cdnos-controller
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: cdnos-controller
+  name: cdnos-sample
+spec:
+  # TODO(user): Add fields here
