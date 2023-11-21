@@ -25,13 +25,8 @@ import (
 
 // CdnosSpec defines the desired state of Cdnos
 type CdnosSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
+	// Image to use for the CDNOS container
 	Image string `json:"image,omitempty"`
-	
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of Cdnos. Edit cdnos_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
 }
 
 // CdnosStatus defines the observed state of Cdnos

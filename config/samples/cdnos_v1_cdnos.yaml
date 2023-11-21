@@ -9,4 +9,4 @@ metadata:
     app.kubernetes.io/created-by: cdnos-controller
   name: cdnos-sample
 spec:
-  # TODO(user): Add fields here
+  image: "qa-registry.dev.drivenets.net/cdnos:sa_vr"
