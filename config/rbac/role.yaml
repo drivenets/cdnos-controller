@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - cdnos.dev.drivenets.net
+  resources:
+  - cdnos
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cdnos.dev.drivenets.net
+  resources:
+  - cdnos/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - cdnos.dev.drivenets.net
+  resources:
+  - cdnos/status
+  verbs:
+  - get
+  - patch
+  - update

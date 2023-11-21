@@ -1,0 +1,31 @@
+# permissions for end users to edit cdnos.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: cdnos-editor-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: cdnos-controller
+    app.kubernetes.io/part-of: cdnos-controller
+    app.kubernetes.io/managed-by: kustomize
+  name: cdnos-editor-role
+rules:
+- apiGroups:
+  - cdnos.dev.drivenets.net
+  resources:
+  - cdnos
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cdnos.dev.drivenets.net
+  resources:
+  - cdnos/status
+  verbs:
+  - get
