@@ -18,6 +18,7 @@ package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -27,7 +28,58 @@ import (
 type CdnosSpec struct {
 	// Image to use for the CDNOS container
 	Image string `json:"image,omitempty"`
+	// Command is the name of the executable to run.
+	Command string `json:"command,omitempty"`
+	// Args are the args to pass to the command.
+	Args []string `json:"args,omitempty"`
+	// Env are the environment variables to set for the container.
+	// +listType=map
+	// +listMapKey=name
+	Env []corev1.EnvVar `json:"env,omitempty"`
+	// ConfigPath is the mount point for configuration inside the pod.
+	ConfigPath string `json:"configPath,omitempty"`
+	// ConfigFile is the default configuration file name for the pod.
+	ConfigFile string `json:"configFile,omitempty"`
+	// InitImage is the docker image to use as an init container for the pod.
+	InitImage string `json:"initImage,omitempty"`
+	// Ports are ports to create on the service.
+	Ports map[string]ServicePort `json:"ports,omitempty"`
+	// InterfaceCount is number of interfaces to be attached to the pod.
+	// +optional
+	InterfaceCount int `json:"interfaceCount"`
+	// InitSleep is the time sleep in the init container
+	// +optional
+	InitSleep int `json:"initSleep"`
+	// Resources are the K8s resources to allocate to lemming container.
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources"`
+	// TLS is the configuration the key/certs to use for management.
+	// +optional
+	TLS *TLSSpec `json:"tls"`
 }
+
+type TLSSpec struct {
+	// SelfSigned generates a new self signed certificate.
+	// +optional
+	SelfSigned *SelfSignedSpec `json:"selfSigned"`
+}
+
+// SelfSignedSpec is the configuration to generate a self-signed cert.
+type SelfSignedSpec struct {
+	/// Common name to set in the cert.
+	CommonName string `json:"commonName"`
+	// RSA keysize to use for key generation.
+	KeySize int `json:"keySize"`
+}
+
+// ServicePort describes an external L4 port on the device.
+type ServicePort struct {
+	// InnerPort is port on the container to expose.
+	InnerPort int32 `json:"innerPort"`
+	// OuterPort is port on the container to expose.
+	OuterPort int32 `json:"outerPort"`
+}
+
 
 // CdnosStatus defines the observed state of Cdnos
 type CdnosStatus struct {
