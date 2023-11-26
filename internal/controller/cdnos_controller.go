@@ -27,6 +27,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/cert"
+	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -61,6 +63,17 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	secret, err := r.reconcileSecrets(ctx, cdnos)
+	if err != nil {
+		log.Error(err, "unable to get reconcile secret")
+		return ctrl.Result{}, err
+	}
+	var secretName string
+	if secret != nil {
+		secretName = secret.GetName()
+		_ = secretName
+	}
+
 	if err := r.reconcileService(ctx, cdnos); err != nil {
 		log.Error(err, "unable to get reconcile service: %v")
 		return ctrl.Result{}, err
@@ -69,6 +82,74 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	log.Info("Cdnos reconciled", "Name", cdnos.Name, "Image", cdnos.Spec.Image, "Namespace", cdnos.Namespace)
 
 	return ctrl.Result{}, nil
+}
+
+func (r *CdnosReconciler) reconcileSecrets(ctx context.Context, cdnos *cdnosv1.Cdnos) (*corev1.Secret, error) {
+	log := log.FromContext(ctx)
+	secretName := fmt.Sprintf("%s-tls", cdnos.Name)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: cdnos.Namespace,
+		},
+	}
+	err := r.Get(ctx, client.ObjectKeyFromObject(secret), secret)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+
+	if !apierrors.IsNotFound(err) {
+		if cdnos.Spec.TLS.SelfSigned == nil {
+			log.Info("no tls config and secret exists, deleting it.")
+			return nil, r.Delete(ctx, secret)
+		}
+		return secret, nil
+	}
+
+	if cdnos.Spec.TLS.SelfSigned != nil {
+		if err := ctrl.SetControllerReference(cdnos, secret, r.Scheme); err != nil {
+			return nil, err
+		}
+		cert, key, err := cert.GenerateSelfSignedCertKey(cdnos.Spec.TLS.SelfSigned.CommonName, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		secret.Data = map[string][]byte{
+			"tls.crt": cert,
+			"tls.key": key,
+		}
+		secret.Type = corev1.SecretTypeTLS
+		log.Info("tls config not empty and secret doesn't exist, creating it.")
+		return secret, r.Create(ctx, secret)
+	}
+	log.Info("no tls config and secret doesn't exist, doing nothing.")
+	return nil, nil
+}
+
+// setupInitialPod creates the initial pod configuration for fields that don't change.
+func (r *CdnosReconciler) setupInitialPod(pod *corev1.Pod, cdnos *cdnosv1.Cdnos) error {
+	pod.ObjectMeta = metav1.ObjectMeta{
+		Name:      cdnos.Name,
+		Namespace: cdnos.Namespace,
+		Labels: map[string]string{
+			"app":  cdnos.Name,
+			"topo": cdnos.Namespace,
+		},
+	}
+	pod.Spec.InitContainers = []corev1.Container{{
+		Name: "init",
+	}}
+	pod.Spec.Containers = []corev1.Container{{
+		Name: "cdnos",
+		SecurityContext: &corev1.SecurityContext{
+			Privileged: pointer.Bool(true),
+		},
+	}}
+
+	if err := ctrl.SetControllerReference(cdnos, pod, r.Scheme); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *CdnosReconciler) reconcileService(ctx context.Context, cdnos *cdnosv1.Cdnos) error {
@@ -126,5 +207,6 @@ func (r *CdnosReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&cdnosv1.Cdnos{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.Secret{}).
 		Complete(r)
 }
