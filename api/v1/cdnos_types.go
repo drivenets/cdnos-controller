@@ -17,8 +17,8 @@ limitations under the License.
 package v1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -80,11 +80,26 @@ type ServicePort struct {
 	OuterPort int32 `json:"outerPort"`
 }
 
+// CdnosPhase is the overall status of the Cdnos.
+type CdnosPhase string
 
-// CdnosStatus defines the observed state of Cdnos
+const (
+	// Running indicates a successfully running cdnos.
+	Running CdnosPhase = "Running"
+	// Failed indicates an error state.
+	Failed CdnosPhase = "Failed"
+	// Unknown indicates an unknown state.
+	Unknown CdnosPhase = "Unknown"
+	// Pending indicates a pending state.
+	Pending CdnosPhase = "Pending"
+)
+
+// CdnosStatus defines the observed state of Lemming
 type CdnosStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Phase is the overall status of the Lemming.
+	Phase CdnosPhase `json:"phase"`
+	// Message describes why the lemming is in the current phase.
+	Message string `json:"message"`
 }
 
 //+kubebuilder:object:root=true
