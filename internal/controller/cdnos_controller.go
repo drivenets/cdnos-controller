@@ -19,7 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
-	"path/filepath"
+	//"path/filepath"
 	"sort"
 
 	cdnosv1 "github.com/drivenets/cdnos-controller/api/v1"
@@ -181,7 +181,8 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	pod.Spec.InitContainers[0].Image = cdnos.Spec.InitImage
 	pod.Spec.InitContainers[0].Args = []string{fmt.Sprintf("%d", cdnos.Spec.InterfaceCount), fmt.Sprintf("%d", cdnos.Spec.InitSleep)}
 	pod.Spec.Containers[0].Command = []string{cdnos.Spec.Command}
-	pod.Spec.Containers[0].Args = append(cdnos.Spec.Args, fmt.Sprintf("--target=%s", cdnos.Name))
+	//pod.Spec.Containers[0].Args = append(cdnos.Spec.Args, fmt.Sprintf("--target=%s", cdnos.Name))
+	//pod.Spec.Containers[0].Args = append(cdnos.Spec.Args, "1000")
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
 	pod.Spec.Containers[0].Resources = cdnos.Spec.Resources
 
@@ -196,7 +197,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	}
 	sort.Strings(sortedArgs)
 	// in case we dont need args remove this line
-	pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, sortedArgs...)
+	//pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, sortedArgs...)
 
 	mounts := map[string]corev1.VolumeMount{}
 	volumes := map[string]corev1.Volume{}
@@ -206,6 +207,34 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	}
 	for _, mount := range pod.Spec.Containers[0].VolumeMounts {
 		mounts[mount.Name] = mount
+	}
+
+	// Add the volume mount unconditionally
+	mounts["modules"] = corev1.VolumeMount{
+		Name:      "modules",
+		MountPath: "/lib/modules",
+	}
+
+	mounts["core"] = corev1.VolumeMount{
+		Name:      "core",
+		MountPath: "/core",
+	}
+
+	// Define the volumes
+	volumes["modules"] = corev1.Volume{
+		Name: "modules",
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: "/lib/modules", // Replace with the actual host path to the modules directory
+			},
+		},
+	}
+
+	volumes["core"] = corev1.Volume{
+		Name: "core",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
 	}
 
 	var changedMounts bool
@@ -231,7 +260,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		changedMounts = true
 	}
 	if secretName != "" {
-		pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, "--tls_key_file", filepath.Join(secretMountPath, "tls.key"), "--tls_cert_file", filepath.Join(secretMountPath, "tls.crt"))
+		//pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, "--tls_key_file", filepath.Join(secretMountPath, "tls.key"), "--tls_cert_file", filepath.Join(secretMountPath, "tls.crt"))
 	}
 
 	if changedMounts {
