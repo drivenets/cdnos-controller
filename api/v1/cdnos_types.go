@@ -50,7 +50,7 @@ type CdnosSpec struct {
 	// InitSleep is the time sleep in the init container
 	// +optional
 	InitSleep int `json:"initSleep"`
-	// Resources are the K8s resources to allocate to lemming container.
+	// Resources are the K8s resources to allocate to cdnos container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources"`
 	// TLS is the configuration the key/certs to use for management.
@@ -94,11 +94,11 @@ const (
 	Pending CdnosPhase = "Pending"
 )
 
-// CdnosStatus defines the observed state of Lemming
+// CdnosStatus defines the observed state of Cdnos
 type CdnosStatus struct {
-	// Phase is the overall status of the Lemming.
+	// Phase is the overall status of the Cdnos.
 	Phase CdnosPhase `json:"phase"`
-	// Message describes why the lemming is in the current phase.
+	// Message describes why the Cdnos is in the current phase.
 	Message string `json:"message"`
 }
 
