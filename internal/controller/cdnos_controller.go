@@ -195,6 +195,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		sortedArgs = append(sortedArgs, arg)
 	}
 	sort.Strings(sortedArgs)
+	// in case we dont need args remove this line
 	pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, sortedArgs...)
 
 	mounts := map[string]corev1.VolumeMount{}
