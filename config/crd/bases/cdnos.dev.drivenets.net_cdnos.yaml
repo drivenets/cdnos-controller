@@ -81,7 +81,8 @@ spec:
                               description: The key to select.
                               type: string
                             name:
-                              description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                              description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                TODO: Add other useful fields. apiVersion, kind, uid?'
                               type: string
                             optional:
                               description: Specify whether the ConfigMap or its key
@@ -194,7 +195,7 @@ spec:
                 description: Ports are ports to create on the service.
                 type: object
               resources:
-                description: Resources are the K8s resources to allocate to lemming
+                description: Resources are the K8s resources to allocate to cdnos
                   container.
                 properties:
                   claims:
@@ -262,6 +263,16 @@ spec:
             type: object
           status:
             description: CdnosStatus defines the observed state of Cdnos
+            properties:
+              message:
+                description: Message describes why the cdnos is in the current phase.
+                type: string
+              phase:
+                description: Phase is the overall status of the Cdnos.
+                type: string
+            required:
+            - message
+            - phase
             type: object
         type: object
     served: true
