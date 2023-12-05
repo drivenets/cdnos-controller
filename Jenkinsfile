@@ -20,7 +20,6 @@ pipeline {
         cleanup {
             echo "========always========"
             sh "kubectl delete -k config/samples/"
-            sh "make uninstall"
             sh "make undeploy"
             cleanWs()
         }
