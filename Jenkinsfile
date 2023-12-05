@@ -1,28 +1,22 @@
 #!/usr/bin/groovy
 @Library('jenkins-pipeline-shared@master') _
 
-pipeline{
-    agent{
+pipeline {
+    agent {
         label "kne"
     }
-    stages{
-        stage("A"){
+    stages {
+        stage("A") {
             steps{
                 echo "========executing A========"
                 sh "ls -ltr"
             }
         }
     }
-    post{
-        success{
-            echo "========pipeline executed successfully ========"
-        }
-        failure{
-            echo "========pipeline execution failed========"
-        }
-        always{
+    post {
+        cleanup {
             echo "========always========"
             cleanWs()
-        }
+        }`
     }
 }
