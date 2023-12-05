@@ -10,6 +10,7 @@ pipeline {
             steps{
                 echo "========executing A========"
                 sh "ls -ltr"
+                sh "kne version"
             }
         }
     }
