@@ -9,7 +9,7 @@ pipeline {
         stage("Deployment") {
             steps{
                 sh "make docker-build"
-                sh "make install" # install crds
+                sh "make install"
                 sh "make deploy"
                 sh "kubectl apply -k config/samples/"
                 sh "kubectl get cdnos"
