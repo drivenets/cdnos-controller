@@ -17,6 +17,6 @@ pipeline {
         cleanup {
             echo "========always========"
             cleanWs()
-        }`
+        }
     }
 }
