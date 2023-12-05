@@ -6,17 +6,22 @@ pipeline {
         label "kne"
     }
     stages {
-        stage("A") {
+        stage("Deployment") {
             steps{
-                echo "========executing A========"
-                sh "ls -ltr"
-                sh "kne version"
+                sh "make docker-build"
+                sh "make install" # install crds
+                sh "make deploy"
+                sh "kubectl apply -k config/samples/"
+                sh "kubectl get cdnos"
             }
         }
     }
     post {
         cleanup {
             echo "========always========"
+            sh "kubectl delete -k config/samples/"
+            sh "make uninstall"
+            sh "make undeploy"
             cleanWs()
         }
     }
