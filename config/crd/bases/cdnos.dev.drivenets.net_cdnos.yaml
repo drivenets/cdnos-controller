@@ -265,7 +265,7 @@ spec:
             description: CdnosStatus defines the observed state of Cdnos
             properties:
               message:
-                description: Message describes why the cdnos is in the current phase.
+                description: Message describes why the Cdnos is in the current phase.
                 type: string
               phase:
                 description: Phase is the overall status of the Cdnos.

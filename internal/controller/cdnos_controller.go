@@ -108,6 +108,7 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	return ctrl.Result{}, nil
 }
 
+// This is the function that is responsible for creating the tls secret
 func (r *CdnosReconciler) reconcileSecrets(ctx context.Context, cdnos *cdnosv1.Cdnos) (*corev1.Secret, error) {
 	log := log.FromContext(ctx)
 	secretName := fmt.Sprintf("%s-tls", cdnos.Name)
@@ -159,6 +160,10 @@ var requiredArgs = map[string]struct{}{
 	"--alsologtostderr":  {},
 }
 
+/*
+This is the function that is responsible for the creation of the pod, including mounting the volumes
+such as the tls secret,and the default volumes of /lib/modules and /core
+*/
 func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos, secretName string) (*corev1.Pod, error) {
 	log := log.FromContext(ctx)
 	pod := &corev1.Pod{}
