@@ -8,8 +8,6 @@ A controller for cdnos pod on Kubernetes Network Simulator (kne).
 
 *   [KNE Project](https://drivenets.atlassian.net/wiki/spaces/DV/pages/4193944113/Google+Testing+Framework)
 
-
-
 ## Getting Started
 
 ### Prerequisites
@@ -75,4 +73,3 @@ make undeploy
 ```
 
 ##
-

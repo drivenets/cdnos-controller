@@ -15,8 +15,16 @@ pipeline {
                 sh "kubectl get cdnos"
             }
         }
+        stage("Generate Manifest") {
+            steps{
+                sh "make generate-manifest"
+            }
+        }
     }
     post {
+        success {
+            archiveArtifacts artifacts: 'config/manifests/manifest.yaml', fingerprint: true
+        }
         cleanup {
             echo "========always========"
             sh "kubectl delete -k config/samples/"
