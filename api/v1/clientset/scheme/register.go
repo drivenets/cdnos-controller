@@ -16,7 +16,7 @@
 package scheme
 
 import (
-	lemmingv1alpha1 "github.com/openconfig/lemming/operator/api/lemming/v1alpha1"
+	cdnosv1 "github.com/drivenets/cdnos-controller/api/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -28,7 +28,7 @@ var Scheme = runtime.NewScheme()
 var Codecs = serializer.NewCodecFactory(Scheme)
 var ParameterCodec = runtime.NewParameterCodec(Scheme)
 var localSchemeBuilder = runtime.SchemeBuilder{
-	lemmingv1alpha1.AddToScheme,
+	cdnosv1.AddToScheme,
 }
 
 // AddToScheme adds all types of this clientset into the given scheme. This allows composition
