@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: registry.dev.drivenets.net/devops/cdnos-controller
-  newTag: "0.1"
+  newTag: "1.0"
