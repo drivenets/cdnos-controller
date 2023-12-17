@@ -33,7 +33,7 @@ type CdnossGetter interface {
 	Cdnoss(namespace string) CdnosInterface
 }
 
-// LemmingInterface has methods to work with Lemming resources.
+// CdnosInterface has methods to work with Cdnos resources.
 type CdnosInterface interface {
 	Create(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.CreateOptions) (*v1alpha1.Cdnos, error)
 	Update(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.UpdateOptions) (*v1alpha1.Cdnos, error)
@@ -47,13 +47,13 @@ type CdnosInterface interface {
 	CdnosExpansion
 }
 
-// lemmings implements LemmingInterface
+// lemmcdnossings implements CdnosInterface
 type cdnoss struct {
 	client rest.Interface
 	ns     string
 }
 
-// newLemmings returns a Lemmings
+// newCdnoss returns a Cdnoss
 func newCdnoss(c *CdnosV1Client, namespace string) *cdnoss {
 	return &cdnoss{
 		client: c.RESTClient(),
@@ -61,7 +61,7 @@ func newCdnoss(c *CdnosV1Client, namespace string) *cdnoss {
 	}
 }
 
-// Get takes name of the lemming, and returns the corresponding lemming object, and an error if there is any.
+// Get takes name of the cdnos, and returns the corresponding cdnos object, and an error if there is any.
 func (c *cdnoss) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Get().
@@ -74,7 +74,7 @@ func (c *cdnoss) Get(ctx context.Context, name string, options v1.GetOptions) (r
 	return
 }
 
-// List takes label and field selectors, and returns the list of Lemmings that match those selectors.
+// List takes label and field selectors, and returns the list of Cdnos that match those selectors.
 func (c *cdnoss) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.CdnosList, err error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
@@ -91,7 +91,7 @@ func (c *cdnoss) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested lemmings.
+// Watch returns a watch.Interface that watches the requested cdnoss.
 func (c *cdnoss) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
@@ -106,7 +106,7 @@ func (c *cdnoss) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interfac
 		Watch(ctx)
 }
 
-// Create takes the representation of a lemming and creates it.  Returns the server's representation of the lemming, and an error, if there is any.
+// Create takes the representation of a cdnos and creates it.  Returns the server's representation of the cdnos, and an error, if there is any.
 func (c *cdnoss) Create(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.CreateOptions) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Post().
@@ -119,7 +119,7 @@ func (c *cdnoss) Create(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.Crea
 	return
 }
 
-// Update takes the representation of a lemming and updates it. Returns the server's representation of the lemming, and an error, if there is any.
+// Update takes the representation of a cdnos and updates it. Returns the server's representation of the cdnos, and an error, if there is any.
 func (c *cdnoss) Update(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.UpdateOptions) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Put().
@@ -149,7 +149,7 @@ func (c *cdnoss) UpdateStatus(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v
 	return
 }
 
-// Delete takes name of the lemming and deletes it. Returns an error if one occurs.
+// Delete takes name of the cdnos and deletes it. Returns an error if one occurs.
 func (c *cdnoss) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
 		Namespace(c.ns).
@@ -176,7 +176,7 @@ func (c *cdnoss) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, li
 		Error()
 }
 
-// Patch applies the patch and returns the patched lemming.
+// Patch applies the patch and returns the patched cdnos.
 func (c *cdnoss) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Patch(pt).

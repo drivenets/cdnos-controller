@@ -36,7 +36,7 @@ type Clientset struct {
 	cdnosv1 *cdnosv1.CdnosV1Client
 }
 
-// LemmingV1alpha1 retrieves the LemmingV1alpha1Client
+// CdnosV1alpha1 retrieves the CdnosV1alpha1Client
 func (c *Clientset) CdnosV1alpha1() cdnosv1.CdnosV1Interface {
 	return c.cdnosv1
 }
