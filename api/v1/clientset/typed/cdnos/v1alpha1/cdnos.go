@@ -47,7 +47,7 @@ type CdnosInterface interface {
 	CdnosExpansion
 }
 
-// lemmcdnossings implements CdnosInterface
+// cdnoss implements CdnosInterface
 type cdnoss struct {
 	client rest.Interface
 	ns     string
