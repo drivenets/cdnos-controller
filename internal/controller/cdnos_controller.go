@@ -182,7 +182,6 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	}
 
 	oldPodSpec := pod.Spec.DeepCopy()
-
 	pod.Spec.Containers[0].Image = cdnos.Spec.Image
 	pod.Spec.InitContainers[0].Image = cdnos.Spec.InitImage
 	pod.Spec.InitContainers[0].Args = []string{fmt.Sprintf("%d", cdnos.Spec.InterfaceCount), fmt.Sprintf("%d", cdnos.Spec.InitSleep)}
@@ -224,6 +223,24 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	mounts["core"] = corev1.VolumeMount{
 		Name:      "core",
 		MountPath: "/core",
+	}
+
+	// Add the ConfigMap volume and volume mount
+	configMapName := cdnos.Name + "-config"
+	volumes["config"] = corev1.Volume{
+		Name: "config",
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMapName,
+				},
+			},
+		},
+	}
+
+	mounts["config"] = corev1.VolumeMount{
+		Name:      "config",
+		MountPath: cdnos.Spec.ConfigPath,
 	}
 
 	// Define the volumes
