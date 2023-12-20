@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/created-by: cdnos-controller
   name: cdnos-sample
 spec:
-  image: "pr-registry.dev.drivenets.net/cdnos:noam2"
+  image: "pr-registry.dev.drivenets.net/cdnos_pr_61596:19.1.0.1_priv.61596.bf7f3a33362c9d37571a06beff36a40bb2f752ef"
   initImage: us-west1-docker.pkg.dev/kne-external/kne/networkop/init-wait:ga
   command: "/define_notif_net.sh"
   ports:
