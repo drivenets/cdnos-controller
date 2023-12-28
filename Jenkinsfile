@@ -32,9 +32,6 @@ pipeline {
             steps {
                 sh 'make generate-manifest'
             }
-            success {
-                archiveArtifacts artifacts: 'config/manifests/manifest.yaml', fingerprint: true
-            }
         }
         stage ('Push Controller Image to Registry') {
             when {
@@ -46,6 +43,9 @@ pipeline {
         }
     }
     post {
+        success {
+            archiveArtifacts artifacts: 'config/manifests/manifest.yaml', fingerprint: true
+        }
         failure {
             sh "make kind-delete"
             cleanWs()
