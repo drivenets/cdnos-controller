@@ -197,7 +197,7 @@ kind-delete: ## Delete a kind cluster
 .PHONY: kind-load
 kind-load: ## Load the images into the kind cluster
 	kind load docker-image ${CONTROLLER_IMG} --name from-makefile
-	docker pull ${CDNOS_IMG}
+	$(CONTAINER_TOOL) pull ${CDNOS_IMG}
 	kind load docker-image ${CDNOS_IMG} --name from-makefile
 
 .PHONY: kind-test
