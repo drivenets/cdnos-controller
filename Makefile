@@ -177,3 +177,31 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+.PHONY: create-cdnos
+create-cdnos: ## Create a CDNOS CRD
+	$(KUSTOMIZE) build config/samples | $(KUBECTL) apply -f -
+.PHONY: kind-create
+kind-create: ## Create a kind cluster
+	kind create cluster --name from-makefile
+
+.PHONY: kind-delete
+kind-delete: ## Delete a kind cluster
+	kind delete cluster --name from-makefile
+
+.PHONY: kind-load
+kind-load: ## Load the images into the kind cluster
+	kind load docker-image ${CONTROLLER_IMG} --name from-makefile
+	$(CONTAINER_TOOL) pull ${CDNOS_IMG}
+	kind load docker-image ${CDNOS_IMG} --name from-makefile
+
+.PHONY: kind-test
+kind-test:
+	kubectl get cdnos
+#   kubectl wait --for=condition=Ready cdnos/cdnos-sample --timeout=10s
+#	kubectl wait --for=condition=available endpoints/service-cdnos-sample --timeout=10s
+
+
+.PHONY: kind
+kind: kind-create kind-load deploy create-cdnos kind-test kind-delete ## Run tests in a kind cluster
+
