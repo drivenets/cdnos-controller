@@ -2,7 +2,7 @@
 # Controller Image URL to use all building/pushing image targets
 CONTROLLER_IMG ?= registry.dev.drivenets.net/devops/cdnos-controller:0.1
 # CDNOS Image URL to use to test CDNOS CRD Deployment
-CDNOS_IMG ?= registry.dev.drivenets.net/devops/cdnos:sa_vr_1.0.0
+CDNOS_IMG ?= registry.dev.drivenets.net/devops/cdnos_pr_61596:19.1.0.1_priv.61596.59ad5662f25a3760114008c0e51c2ef1b583ae7e
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.28.0
 
