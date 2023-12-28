@@ -1,23 +1,33 @@
 #!/usr/bin/groovy
 @Library('jenkins-pipeline-shared@master') _
 
+
 pipeline {
     agent {
-        label "kne"
+        label 'kne'
     }
     stages {
-        stage("Deployment") {
-            steps{
-                sh "make docker-build"
-                sh "make install"
-                sh "make deploy"
-                sh "kubectl apply -k config/samples/"
-                sh "kubectl get cdnos"
+        stage('Build Controller Image') {
+            steps {
+                sh 'make docker-build'
             }
         }
-        stage("Generate Manifest") {
+        stage('Test on Kind Cluster') {
             steps{
-                sh "make generate-manifest"
+                sh 'make kind'
+            }
+        }
+        stage('Generate Manifest') {
+            steps {
+                sh 'make generate-manifest'
+            }
+        }
+        stage ('Push Controller Image to Registry') {
+            when {
+                branch 'main'
+            }
+            steps {
+                sh 'make docker-push'
             }
         }
     }
@@ -25,10 +35,10 @@ pipeline {
         success {
             archiveArtifacts artifacts: 'config/manifests/manifest.yaml', fingerprint: true
         }
-        cleanup {
-            echo "========always========"
+        failure {
             sh "kubectl delete -k config/samples/"
             sh "make undeploy"
+            sh "make kind-delete"
             cleanWs()
         }
     }

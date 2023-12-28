@@ -2,7 +2,7 @@
 # Controller Image URL to use all building/pushing image targets
 CONTROLLER_IMG ?= registry.dev.drivenets.net/devops/cdnos-controller:0.1
 # CDNOS Image URL to use to test CDNOS CRD Deployment
-CDNOS_IMG ?= registry.dev.drivenets.net/devops/cdnos:0.1
+CDNOS_IMG ?= registry.dev.drivenets.net/devops/cdnos:sa_vr_1.0.0
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.28.0
 
@@ -183,6 +183,9 @@ envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
+.PHONY: create-cdnos
+create-cdnos: ## Create a CDNOS CRD
+	$(KUSTOMIZE) build config/samples | $(KUBECTL) apply -f -
 .PHONY: kind-create
 kind-create: ## Create a kind cluster
 	kind create cluster --name from-makefile
@@ -192,7 +195,16 @@ kind-delete: ## Delete a kind cluster
 	kind delete cluster --name from-makefile
 
 .PHONY: kind-load
-kind-load: ## Load the image into the kind cluster
-	kind load docker-image ${CDNOS_IMG} --name from-makefile
+kind-load: ## Load the images into the kind cluster
 	kind load docker-image ${CONTROLLER_IMG} --name from-makefile
+	kind load docker-image ${CDNOS_IMG} --name from-makefile
+
+.PHONY: kind-test
+kind-test:
+#   kubectl wait --for=condition=Ready cdnos/cdnos-sample --timeout=10s
+	kubectl wait --for=condition=available endpoints/service-cdnos-sample --timeout=10s
+
+
+.PHONY: kind
+kind: kind-create kind-load deploy create-cdnos kind-test kind-delete ## Run tests in a kind cluster
 
