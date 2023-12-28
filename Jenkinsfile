@@ -7,6 +7,16 @@ pipeline {
         label 'kne'
     }
     stages {
+        stage('Clean Workspace') {
+            steps {
+                script {
+                    try {
+                        sh "make kind-delete"
+                    } catch (err) {
+                        echo "Error cleaning workspace: ${err}"
+                }
+            }
+        }
         stage('Build Controller Image') {
             steps {
                 sh 'make docker-build'
@@ -36,8 +46,6 @@ pipeline {
             archiveArtifacts artifacts: 'config/manifests/manifest.yaml', fingerprint: true
         }
         failure {
-            sh "kubectl delete -k config/samples/"
-            sh "make undeploy"
             sh "make kind-delete"
             cleanWs()
         }
