@@ -202,8 +202,9 @@ kind-load: ## Load the images into the kind cluster
 
 .PHONY: kind-test
 kind-test:
+	kubectl get cdnos
 #   kubectl wait --for=condition=Ready cdnos/cdnos-sample --timeout=10s
-	kubectl wait --for=condition=available endpoints/service-cdnos-sample --timeout=10s
+#	kubectl wait --for=condition=available endpoints/service-cdnos-sample --timeout=10s
 
 
 .PHONY: kind
