@@ -14,6 +14,7 @@ pipeline {
                         sh "make kind-delete"
                     } catch (err) {
                         echo "Error cleaning workspace: ${err}"
+                    }
                 }
             }
         }
