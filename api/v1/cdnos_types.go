@@ -36,6 +36,8 @@ type CdnosSpec struct {
 	// +listType=map
 	// +listMapKey=name
 	Env []corev1.EnvVar `json:"env,omitempty"`
+	// Metadata labels describing the node.
+	Labels map[string]string `json:"labels,omitempty"`
 	// ConfigPath is the mount point for configuration inside the pod.
 	ConfigPath string `json:"configPath,omitempty"`
 	// ConfigFile is the default configuration file name for the pod.
