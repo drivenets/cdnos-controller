@@ -176,6 +176,11 @@ spec:
                 description: InterfaceCount is number of interfaces to be attached
                   to the pod.
                 type: integer
+              labels:
+                additionalProperties:
+                  type: string
+                description: Metadata labels describing the node.
+                type: object
               ports:
                 additionalProperties:
                   description: ServicePort describes an external L4 port on the device.

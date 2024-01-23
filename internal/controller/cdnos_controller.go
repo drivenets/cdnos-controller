@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+
 	//"path/filepath"
 	"sort"
 
@@ -27,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -189,7 +191,37 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	//pod.Spec.Containers[0].Args = append(cdnos.Spec.Args, fmt.Sprintf("--target=%s", cdnos.Name))
 	//pod.Spec.Containers[0].Args = append(cdnos.Spec.Args, "1000")
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
-	pod.Spec.Containers[0].Resources = cdnos.Spec.Resources
+	//pod.Spec.Containers[0].Resources = cdnos.Spec.Resources
+	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
+	pod.Spec.Containers[0].Resources = Limits
+
+	// Assuming cdnos.Spec.Env is of type []corev1.EnvVar
+	cdnosEnv := cdnos.Spec.Env
+
+	// Specify the field name to check
+	tsfieldName := "ALLOC_TS"
+	corefieldName := "ALLOC_CORE"
+	redisfieldName := "ALLOC_CORE"
+	tspath := "/techsupport"
+	corepath := "/core"
+	redispath := "/redis_vol"
+
+	// Check if the specified field exists in the Env slice
+	if checkFieldExists(cdnosEnv, tsfieldName) {
+		fmt.Println(tsfieldName, "is present")
+		tspath = "/ts_vol"
+		fmt.Println(tspath, "is present")
+	}
+	if checkFieldExists(cdnosEnv, corefieldName) {
+		corepath = "/core_vol"
+		fmt.Println(corepath, "is present")
+	}
+	if checkFieldExists(cdnosEnv, redisfieldName) {
+		redispath = "/redis_vol"
+		fmt.Println(redispath, "is present")
+	}
+
+	fmt.Println(tspath, "this is the real value")
 
 	for _, arg := range pod.Spec.Containers[0].Args {
 		if _, ok := requiredArgs[arg]; ok {
@@ -220,29 +252,50 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		MountPath: "/lib/modules",
 	}
 
+	// mounts["redis"] = corev1.VolumeMount{
+	// 	Name:      "redis",
+	// 	MountPath: "/redis",
+	// }
+
 	mounts["core"] = corev1.VolumeMount{
 		Name:      "core",
-		MountPath: "/core",
+		MountPath: corepath,
 	}
 
-	// Add the ConfigMap volume and volume mount
-	configMapName := cdnos.Name + "-config"
-	volumes["config"] = corev1.Volume{
-		Name: "config",
-		VolumeSource: corev1.VolumeSource{
-			ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: configMapName,
+	mounts["ts"] = corev1.VolumeMount{
+		Name:      "ts",
+		MountPath: tspath,
+	}
+
+	// Add the ConfigMap volume and volume mount if mentioned
+	if cdnos.Spec.ConfigPath != "" && cdnos.Spec.ConfigFile != "" {
+		fmt.Println(cdnos.Name, "have a config")
+		configMapName := cdnos.Name + "-config"
+		volumes["config"] = corev1.Volume{
+			Name: "config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configMapName,
+					},
 				},
 			},
-		},
+		}
+
+		mounts["config"] = corev1.VolumeMount{
+			Name:      "config",
+			MountPath: cdnos.Spec.ConfigPath,
+		}
 	}
 
-	mounts["config"] = corev1.VolumeMount{
-		Name:      "config",
-		MountPath: cdnos.Spec.ConfigPath,
-	}
-
+	// volumes["redis"] = corev1.Volume{
+	// 	Name: "redis",
+	// 	VolumeSource: corev1.VolumeSource{
+	// 		HostPath: &corev1.HostPathVolumeSource{
+	// 			Path: "/redis/" + cdnos.Name, // Replace with the actual host path to the modules directory
+	// 		},
+	// 	},
+	// }
 	// Define the volumes
 	volumes["modules"] = corev1.Volume{
 		Name: "modules",
@@ -255,6 +308,13 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 
 	volumes["core"] = corev1.Volume{
 		Name: "core",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	}
+
+	volumes["ts"] = corev1.Volume{
+		Name: "ts",
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
@@ -339,6 +399,49 @@ func (r *CdnosReconciler) setupInitialPod(pod *corev1.Pod, cdnos *cdnosv1.Cdnos)
 	return nil
 }
 
+// Check if the given field name exists in the Env slice
+func checkFieldExists(env []corev1.EnvVar, fieldName string) bool {
+	for _, item := range env {
+		if item.Name == fieldName {
+			return true
+		}
+	}
+	return false
+}
+
+func CombineResourceRequirements(kv map[string]string, req2 corev1.ResourceRequirements) corev1.ResourceRequirements {
+	result := corev1.ResourceRequirements{
+		Requests: map[corev1.ResourceName]resource.Quantity{},
+		Limits:   map[corev1.ResourceName]resource.Quantity{},
+	}
+
+	if v, ok := kv["cpu"]; ok {
+		result.Requests[corev1.ResourceCPU] = resource.MustParse(v)
+	}
+
+	if v, ok := kv["memory"]; ok {
+		result.Requests[corev1.ResourceMemory] = resource.MustParse(v)
+	}
+
+	for name, quantity := range req2.Requests {
+		result.Requests[name] = quantity.DeepCopy()
+	}
+
+	if v, ok := kv["cpu_limit"]; ok {
+		result.Limits[corev1.ResourceCPU] = resource.MustParse(v)
+	}
+
+	if v, ok := kv["memory_limit"]; ok {
+		result.Limits[corev1.ResourceMemory] = resource.MustParse(v)
+	}
+
+	for name, quantity := range req2.Limits {
+		result.Limits[name] = quantity.DeepCopy()
+	}
+
+	return result
+}
+
 func (r *CdnosReconciler) reconcileService(ctx context.Context, cdnos *cdnosv1.Cdnos) error {
 	var service corev1.Service
 	svcName := fmt.Sprintf("service-%s", cdnos.Name)
@@ -396,5 +499,7 @@ func (r *CdnosReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.Secret{}).
+		Owns(&corev1.PersistentVolume{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
 		Complete(r)
 }
