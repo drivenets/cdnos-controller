@@ -74,5 +74,39 @@ make uninstall
 make undeploy
 ```
 
-##
+## Update cdnos controller image on AWS
 
+To update cdnos controller, update the image tag on makefile:
+This line:
+>>> CONTROLLER_IMG ?= public.ecr.aws/dn/cdnos-controller:<your-tag>
+
+
+Rebuild the image:
+
+```sh
+make docker-build
+```
+
+Connect to aws ecr registry:
+```sh
+aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/dn
+```
+
+Push image to registry:
+```sh
+make docker-push```
+
+We want to keep the latest tag updated so tag the image to `latest`:
+```sh
+docker tag public.ecr.aws/dn/cdnos-controller:<your-tag> public.ecr.aws/dn/cdnos-controller:latest
+```
+
+And push it to AWS ecr:
+```sh
+docker push public.ecr.aws/dn/cdnos-controller:latest
+```
+
+You should now be able to pull the image:
+
+```sh
+docker pull public.ecr.aws/dn/cdnos-controller:<your-tag>```
