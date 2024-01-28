@@ -27,7 +27,7 @@ A controller for cdnos pod on Kubernetes Network Simulator (kne).
 **Build and push your image to the location specified by `IMG`:**
 
 ```sh
-make docker-build docker-push IMG=registry.dev.drivenets.net/devops/cdnos-controller:0.1
+make docker-build docker-push IMG=public.ecr.aws/dn/cdnos-controller:1.4
 ```
 
 **NOTE:** This image ought to be published in the personal registry you specified. And it is required to have access to pull the image from the working environment. Make sure you have the proper permission to the registry if the above commands don’t work.
@@ -41,7 +41,7 @@ make install
 **Deploy the Manager to the cluster with the image specified by `IMG`:**
 
 ```sh
-make deploy IMG=registry.dev.drivenets.net/devops/cdnos-controller:0.1
+make deploy IMG=public.ecr.aws/dn/cdnos-controller:1.4
 ```
 
 > **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin privileges or be logged in as admin.
