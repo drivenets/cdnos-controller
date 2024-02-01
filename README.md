@@ -78,8 +78,10 @@ make undeploy
 
 To update cdnos controller, update the image tag on makefile:
 This line:
->>> CONTROLLER_IMG ?= public.ecr.aws/dn/cdnos-controller:<your-tag>
 
+```
+CONTROLLER_IMG ?= public.ecr.aws/dn/cdnos-controller:<your-tag>
+```
 
 Rebuild the image:
 
@@ -94,7 +96,8 @@ aws ecr-public get-login-password --region us-east-1 | docker login --username A
 
 Push image to registry:
 ```sh
-make docker-push```
+make docker-push
+```
 
 We want to keep the latest tag updated so tag the image to `latest`:
 ```sh
@@ -109,4 +112,5 @@ docker push public.ecr.aws/dn/cdnos-controller:latest
 You should now be able to pull the image:
 
 ```sh
-docker pull public.ecr.aws/dn/cdnos-controller:<your-tag>```
+docker pull public.ecr.aws/dn/cdnos-controller:<your-tag>
+```
