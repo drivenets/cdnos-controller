@@ -74,12 +74,16 @@ make uninstall
 make undeploy
 ```
 
-## Update cdnos controller image on AWS
+## Update cdnos controller image
+
+### AWS
 
 To update cdnos controller, update the image tag on makefile:
 This line:
->>> CONTROLLER_IMG ?= public.ecr.aws/dn/cdnos-controller:<your-tag>
 
+```
+CONTROLLER_IMG ?= public.ecr.aws/dn/cdnos-controller:<your-tag>
+```
 
 Rebuild the image:
 
@@ -94,7 +98,8 @@ aws ecr-public get-login-password --region us-east-1 | docker login --username A
 
 Push image to registry:
 ```sh
-make docker-push```
+make docker-push
+```
 
 We want to keep the latest tag updated so tag the image to `latest`:
 ```sh
@@ -109,4 +114,19 @@ docker push public.ecr.aws/dn/cdnos-controller:latest
 You should now be able to pull the image:
 
 ```sh
-docker pull public.ecr.aws/dn/cdnos-controller:<your-tag>```
+docker pull public.ecr.aws/dn/cdnos-controller:<your-tag>
+```
+
+### Manifest
+We need to update the kubernetes manifest with the new image tag.
+Modify this line in `config/manager/kustomization.yaml`:
+```
+newTag: "<your tag>"
+```
+
+Generate the manifest:
+```sh
+make generate-manifest
+```
+
+The new manifest is now available at this path: `config/manifests/manifest.yaml`.
