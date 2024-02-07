@@ -188,10 +188,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	pod.Spec.InitContainers[0].Image = cdnos.Spec.InitImage
 	pod.Spec.InitContainers[0].Args = []string{fmt.Sprintf("%d", cdnos.Spec.InterfaceCount), fmt.Sprintf("%d", cdnos.Spec.InitSleep)}
 	pod.Spec.Containers[0].Command = []string{cdnos.Spec.Command}
-	//pod.Spec.Containers[0].Args = append(cdnos.Spec.Args, fmt.Sprintf("--target=%s", cdnos.Name))
-	//pod.Spec.Containers[0].Args = append(cdnos.Spec.Args, "1000")
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
-	//pod.Spec.Containers[0].Resources = cdnos.Spec.Resources
 	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
 	pod.Spec.Containers[0].Resources = Limits
 
@@ -404,6 +401,7 @@ func checkFieldExists(env []corev1.EnvVar, fieldName string) bool {
 	return false
 }
 
+// This is the function that is responsible for organizing the resource requirements and limits from the labels
 func CombineResourceRequirements(kv map[string]string, req2 corev1.ResourceRequirements) corev1.ResourceRequirements {
 	result := corev1.ResourceRequirements{
 		Requests: map[corev1.ResourceName]resource.Quantity{},
@@ -437,6 +435,7 @@ func CombineResourceRequirements(kv map[string]string, req2 corev1.ResourceRequi
 	return result
 }
 
+// This function is responsible for reconciling the service
 func (r *CdnosReconciler) reconcileService(ctx context.Context, cdnos *cdnosv1.Cdnos) error {
 	var service corev1.Service
 	svcName := fmt.Sprintf("service-%s", cdnos.Name)

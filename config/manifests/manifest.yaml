@@ -576,7 +576,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: public.ecr.aws/dn/cdnos-controller:1.7.1
+        image: public.ecr.aws/dn/cdnos-controller:1.7.2
         livenessProbe:
           httpGet:
             path: /healthz
