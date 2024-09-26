@@ -26,7 +26,7 @@ import (
 	cdnosv1 "github.com/drivenets/cdnos-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
+	// "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -353,10 +353,11 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		return pod, r.Create(ctx, pod)
 	}
 
-	if equality.Semantic.DeepEqual(oldPodSpec, &pod.Spec) {
-		log.Info("pod unchanged, doing nothing")
-		return pod, nil
-	}
+	// if equality.Semantic.DeepEqual(oldPodSpec, &pod.Spec) {
+	// 	log.Info("pod unchanged, doing nothing")
+	//	return pod, nil
+	//}
+
 	log.Info("pod changed, recreating", "diff", cmp.Diff(*oldPodSpec, pod.Spec))
 	// Pods are mostly immutable, so recreate it if the spec changed.
 	if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
