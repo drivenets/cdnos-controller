@@ -172,7 +172,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: cdnos.Name, Namespace: cdnos.Namespace}, pod)
 	var newPod bool
-	var state corev1.ContainerState
+	var containerState corev1.ContainerState
 
 	if apierrors.IsNotFound(err) {
 		log.Info("new pod, creating initial spec")
@@ -191,15 +191,14 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		fmt.Printf("  Ready: %t\n", containerStatus.Ready)
 		fmt.Printf("  Restart Count: %d\n", containerStatus.RestartCount)
 		fmt.Printf("  Image: %s\n", containerStatus.Image)
-		state = containerStatus.State
+		containerState = containerStatus.State
 	}
 
-	if state.Terminated != nil {
-		fmt.Printf("Pod exited, recreating")
+	if containerState.Terminated != nil {
+		fmt.Printf("container exited, recreating")
 		if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
 			return nil, err
 		}
-		return pod, r.Create(ctx, pod)
 	}
 
 	oldPodSpec := pod.Spec.DeepCopy()
@@ -281,7 +280,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 
 	// Add the ConfigMap volume and volume mount if mentioned
 	if cdnos.Spec.ConfigPath != "" && cdnos.Spec.ConfigFile != "" {
-		fmt.Println(cdnos.Name, "have a config")
+		fmt.Println(cdnos.Name, "has a config")
 		configMapName := cdnos.Name + "-config"
 		volumes["config"] = corev1.Volume{
 			Name: "config",
