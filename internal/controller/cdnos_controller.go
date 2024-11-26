@@ -172,6 +172,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, types.NamespacedName{Name: cdnos.Name, Namespace: cdnos.Namespace}, pod)
 	var newPod bool
+	var state corev1.ContainerState
 
 	if apierrors.IsNotFound(err) {
 		log.Info("new pod, creating initial spec")
@@ -181,6 +182,24 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		newPod = true
 	} else if err != nil {
 		return nil, err
+	}
+
+	fmt.Printf("Container statuses for Pod %s:\n", pod.Name)
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		fmt.Printf("- Name: %s\n", containerStatus.Name)
+		fmt.Printf("  State: %+v\n", containerStatus.State)
+		fmt.Printf("  Ready: %t\n", containerStatus.Ready)
+		fmt.Printf("  Restart Count: %d\n", containerStatus.RestartCount)
+		fmt.Printf("  Image: %s\n", containerStatus.Image)
+		state = containerStatus.State
+	}
+
+	if state.Terminated != nil {
+		fmt.Printf("Pod exited, recreating")
+		if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
+			return nil, err
+		}
+		return pod, r.Create(ctx, pod)
 	}
 
 	oldPodSpec := pod.Spec.DeepCopy()
