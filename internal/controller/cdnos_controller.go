@@ -212,6 +212,15 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 
 	// Assuming cdnos.Spec.Env is of type []corev1.EnvVar
 	cdnosEnv := cdnos.Spec.Env
+	// Ensure POD_NAME env var exists for subPathExpr expansion
+	if !checkFieldExists(pod.Spec.Containers[0].Env, "POD_NAME") {
+		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, corev1.EnvVar{
+			Name: "POD_NAME",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+			},
+		})
+	}
 
 	// Specify the field name to check
 	tsfieldName := "ALLOC_TS"
@@ -235,9 +244,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	}
 
 	for _, arg := range pod.Spec.Containers[0].Args {
-		if _, ok := requiredArgs[arg]; ok {
-			delete(requiredArgs, arg)
-		}
+		delete(requiredArgs, arg)
 	}
 	sortedArgs := make([]string, 0, len(requiredArgs))
 	for arg := range requiredArgs {
@@ -257,6 +264,12 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		mounts[mount.Name] = mount
 	}
 
+	var changedMounts bool
+
+	// Capture existing core volume/mount for change detection
+	oldCoreVol, coreVolExists := volumes["core"]
+	oldCoreMount, coreMountExists := mounts["core"]
+
 	// Add the volume mount unconditionally
 	mounts["modules"] = corev1.VolumeMount{
 		Name:      "modules",
@@ -268,10 +281,16 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		MountPath: redispath,
 	}
 
-	mounts["core"] = corev1.VolumeMount{
-		Name:      "core",
-		MountPath: corepath,
+	newCoreMount := corev1.VolumeMount{
+		Name:        "core",
+		MountPath:   corepath,
+		SubPathExpr: "$(POD_NAME)",
 	}
+	// Detect mount changes
+	if !coreMountExists || oldCoreMount.SubPathExpr != newCoreMount.SubPathExpr || oldCoreMount.MountPath != newCoreMount.MountPath {
+		changedMounts = true
+	}
+	mounts["core"] = newCoreMount
 
 	mounts["ts"] = corev1.VolumeMount{
 		Name:      "ts",
@@ -316,12 +335,22 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		},
 	}
 
-	volumes["core"] = corev1.Volume{
+	// Make /core a HostPath on the node, persistent, with per-pod subdir via SubPathExpr
+	hostPathDirOrCreate := corev1.HostPathDirectoryOrCreate
+	newCoreVol := corev1.Volume{
 		Name: "core",
 		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: "/core",
+				Type: &hostPathDirOrCreate,
+			},
 		},
 	}
+	// Detect volume changes
+	if !coreVolExists || oldCoreVol.HostPath == nil || oldCoreVol.HostPath.Path != newCoreVol.HostPath.Path {
+		changedMounts = true
+	}
+	volumes["core"] = newCoreVol
 
 	volumes["ts"] = corev1.Volume{
 		Name: "ts",
@@ -330,7 +359,6 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		},
 	}
 
-	var changedMounts bool
 	if _, ok := volumes["tls"]; secretName != "" && !ok {
 		log.Info("adding tls secret to pod spec")
 		volumes["tls"] = corev1.Volume{
@@ -356,6 +384,10 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		//pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, "--tls_key_file", filepath.Join(secretMountPath, "tls.key"), "--tls_cert_file", filepath.Join(secretMountPath, "tls.crt"))
 	}
 
+	// Ensure initial pod gets volumes/mounts applied
+	if newPod {
+		changedMounts = true
+	}
 	if changedMounts {
 		pod.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{}
 		pod.Spec.Volumes = []corev1.Volume{}
