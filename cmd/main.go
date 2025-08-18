@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -39,6 +40,11 @@ import (
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+)
+
+var (
+	// Bump this minor version as needed. Can be overridden via env CDNOS_MANAGER_VERSION
+	versionMinor = "0.1.0"
 )
 
 func init() {
@@ -64,6 +70,11 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if v := os.Getenv("CDNOS_MANAGER_VERSION"); v != "" {
+		versionMinor = v
+	}
+	setupLog.Info("manager startup", "versionMinor", versionMinor, "timestamp", time.Now().UTC().Format(time.RFC3339))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,

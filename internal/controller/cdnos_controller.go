@@ -19,9 +19,11 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	//"path/filepath"
 	"sort"
+	"strings"
 
 	cdnosv1 "github.com/drivenets/cdnos-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
@@ -66,8 +68,12 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	cdnos := &cdnosv1.Cdnos{}
 
 	if err := r.Get(ctx, req.NamespacedName, cdnos); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info("Cdnos resource not found; likely deleted, skipping")
+			return ctrl.Result{}, nil
+		}
 		log.Error(err, "unable to fetch Cdnos")
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return ctrl.Result{}, err
 	}
 
 	secret, err := r.reconcileSecrets(ctx, cdnos)
@@ -83,6 +89,11 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	pod, err := r.reconcilePod(ctx, cdnos, secretName)
 	if err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		if apierrors.IsAlreadyExists(err) || strings.Contains(lowerErr, "already exists") || strings.Contains(lowerErr, "being deleted") {
+			log.Info("pod exists or is being deleted; requeueing")
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
 		log.Error(err, "unable to get reconcile pod")
 		return ctrl.Result{}, err
 	}
@@ -209,6 +220,10 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
 	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
 	pod.Spec.Containers[0].Resources = Limits
+	// Normalize empty resource lists to nil to avoid spurious diffs
+	if pod.Spec.Containers[0].Resources.Limits != nil && len(pod.Spec.Containers[0].Resources.Limits) == 0 {
+		pod.Spec.Containers[0].Resources.Limits = nil
+	}
 
 	// Assuming cdnos.Spec.Env is of type []corev1.EnvVar
 	cdnosEnv := cdnos.Spec.Env
@@ -217,7 +232,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, corev1.EnvVar{
 			Name: "POD_NAME",
 			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+				FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.name"},
 			},
 		})
 	}
@@ -335,14 +350,16 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		},
 	}
 
-	// Make /core a HostPath on the node, persistent, with per-pod subdir via SubPathExpr
-	hostPathDirOrCreate := corev1.HostPathDirectoryOrCreate
+	// Use HostPath /core only if it exists on the node (do not create parent). Subdir is created via SubPathExpr
+	hostPathDir := corev1.HostPathDirectory
+	coreHostPath := "/core"
+	log.Info("configuring core volume to use HostPath", "hostPath", coreHostPath, "mountPath", corepath)
 	newCoreVol := corev1.Volume{
 		Name: "core",
 		VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{
-				Path: "/core",
-				Type: &hostPathDirOrCreate,
+				Path: coreHostPath,
+				Type: &hostPathDir,
 			},
 		},
 	}
@@ -351,6 +368,27 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		changedMounts = true
 	}
 	volumes["core"] = newCoreVol
+
+	// If the container is stuck waiting with hostPath/mount errors (likely /core doesn't exist), fallback to EmptyDir
+	if containerState.Waiting != nil {
+		waitingLower := strings.ToLower(containerState.Waiting.Reason + " " + containerState.Waiting.Message)
+		if strings.Contains(waitingLower, "hostpath") || strings.Contains(waitingLower, "mount") || strings.Contains(waitingLower, "no such file") || strings.Contains(waitingLower, "not a directory") {
+			log.Info("HostPath /core appears unavailable; falling back to EmptyDir for core volume")
+			volumes["core"] = corev1.Volume{
+				Name: "core",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			}
+			// Remove subPath when falling back to EmptyDir
+			newCoreMountFallback := corev1.VolumeMount{
+				Name:      "core",
+				MountPath: corepath,
+			}
+			mounts["core"] = newCoreMountFallback
+			changedMounts = true
+		}
+	}
 
 	volumes["ts"] = corev1.Volume{
 		Name: "ts",
@@ -391,16 +429,28 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	if changedMounts {
 		pod.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{}
 		pod.Spec.Volumes = []corev1.Volume{}
-		for _, mount := range mounts {
-			pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, mount)
+		// deterministically order mounts by name
+		mountNames := make([]string, 0, len(mounts))
+		for name := range mounts {
+			mountNames = append(mountNames, name)
 		}
-		for _, volume := range volumes {
-			pod.Spec.Volumes = append(pod.Spec.Volumes, volume)
+		sort.Strings(mountNames)
+		for _, name := range mountNames {
+			pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, mounts[name])
+		}
+		// deterministically order volumes by name
+		volumeNames := make([]string, 0, len(volumes))
+		for name := range volumes {
+			volumeNames = append(volumeNames, name)
+		}
+		sort.Strings(volumeNames)
+		for _, name := range volumeNames {
+			pod.Spec.Volumes = append(pod.Spec.Volumes, volumes[name])
 		}
 	}
 
 	if newPod {
-		return pod, r.Create(ctx, pod)
+		return pod, r.tryCreatePodWithFallback(ctx, pod)
 	}
 
 	if equality.Semantic.DeepEqual(oldPodSpec, &pod.Spec) {
@@ -412,7 +462,87 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
 		return nil, err
 	}
-	return pod, r.Create(ctx, pod)
+	return pod, r.tryCreatePodWithFallback(ctx, pod)
+}
+
+// tryCreatePodWithFallback attempts to create the Pod. If creation is forbidden or
+// otherwise fails due to HostPath usage (common in clusters that disallow HostPath),
+// it switches the "core" volume to EmptyDir (ephemeral) and retries once.
+func (r *CdnosReconciler) tryCreatePodWithFallback(ctx context.Context, pod *corev1.Pod) error {
+	log := log.FromContext(ctx)
+	log.Info("creating pod with HostPath core volume")
+	// Build a fresh object with clean metadata to avoid resourceVersion/UID issues
+	safePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            pod.Name,
+			Namespace:       pod.Namespace,
+			Labels:          pod.Labels,
+			Annotations:     pod.Annotations,
+			OwnerReferences: pod.OwnerReferences,
+		},
+		Spec: *pod.Spec.DeepCopy(),
+	}
+	if err := r.Create(ctx, safePod); err != nil {
+		lowerErr := strings.ToLower(err.Error())
+		// If the pod already exists or is in the process of being deleted, this is expected; let caller requeue
+		if apierrors.IsAlreadyExists(err) || strings.Contains(lowerErr, "already exists") || strings.Contains(lowerErr, "being deleted") {
+			log.Info("pod exists or is being deleted; will requeue", "pod", safePod.Name)
+			return err
+		}
+		log.Error(err, "failed to create pod with HostPath core volume")
+		// Print detailed info about HostPath volumes and their mounts to identify which directory failed
+		for _, v := range safePod.Spec.Volumes {
+			if v.HostPath != nil {
+				var mountPath, subPathExpr string
+				for _, m := range safePod.Spec.Containers[0].VolumeMounts {
+					if m.Name == v.Name {
+						mountPath = m.MountPath
+						subPathExpr = m.SubPathExpr
+						break
+					}
+				}
+				log.Info(
+					"HostPath volume setup failed (debug)",
+					"volume", v.Name,
+					"hostPath", v.HostPath.Path,
+					"mountPath", mountPath,
+					"subPathExpr", subPathExpr,
+				)
+			}
+		}
+		// Detect HostPath-related rejections
+		if apierrors.IsForbidden(err) || strings.Contains(strings.ToLower(err.Error()), "hostpath") {
+			log.Info("falling back to EmptyDir for core volume due to HostPath restrictions")
+			// Fallback: replace core HostPath with EmptyDir
+			for i, v := range safePod.Spec.Volumes {
+				if v.Name == "core" {
+					safePod.Spec.Volumes[i] = corev1.Volume{
+						Name: "core",
+						VolumeSource: corev1.VolumeSource{
+							EmptyDir: &corev1.EmptyDirVolumeSource{},
+						},
+					}
+					break
+				}
+			}
+			// Retry once with EmptyDir
+			log.Info("retrying pod creation with EmptyDir core volume")
+			retryPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            safePod.Name,
+					Namespace:       safePod.Namespace,
+					Labels:          safePod.Labels,
+					Annotations:     safePod.Annotations,
+					OwnerReferences: safePod.OwnerReferences,
+				},
+				Spec: *safePod.Spec.DeepCopy(),
+			}
+			return r.Create(ctx, retryPod)
+		}
+		return err
+	}
+	log.Info("pod created successfully")
+	return nil
 }
 
 // setupInitialPod creates the initial pod configuration for fields that don't change.
