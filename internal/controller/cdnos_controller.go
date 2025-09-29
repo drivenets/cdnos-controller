@@ -19,9 +19,11 @@ package controller
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	//"path/filepath"
+	"os"
 	"sort"
 	"strings"
 
@@ -52,6 +54,8 @@ type CdnosReconciler struct {
 //+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=pods;services;secrets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch
+//+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -99,7 +103,7 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	if err := r.reconcileService(ctx, cdnos); err != nil {
-		log.Error(err, "unable to get reconcile service: %v")
+		log.Error(err, "unable to get reconcile service")
 		return ctrl.Result{}, err
 	}
 
@@ -115,6 +119,12 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err := r.Status().Update(ctx, cdnos); err != nil {
 		log.Error(err, "unable to update cdnos status")
 		return ctrl.Result{}, err
+	}
+
+	// If pod is Pending and using HostPath /core, requeue quickly to allow event-based fallback to trigger
+	if pod.Status.Phase == corev1.PodPending && podHasCoreHostPath(pod) {
+		log.Info("pod pending with HostPath /core; requeueing to evaluate fallback")
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
 
 	log.Info("Cdnos reconciled", "Name", cdnos.Name, "Image", cdnos.Spec.Image, "Namespace", cdnos.Namespace)
@@ -138,14 +148,14 @@ func (r *CdnosReconciler) reconcileSecrets(ctx context.Context, cdnos *cdnosv1.C
 	}
 
 	if !apierrors.IsNotFound(err) {
-		if cdnos.Spec.TLS.SelfSigned == nil {
+		if cdnos.Spec.TLS == nil || cdnos.Spec.TLS.SelfSigned == nil {
 			log.Info("no tls config and secret exists, deleting it.")
 			return nil, r.Delete(ctx, secret)
 		}
 		return secret, nil
 	}
 
-	if cdnos.Spec.TLS.SelfSigned != nil {
+	if cdnos.Spec.TLS != nil && cdnos.Spec.TLS.SelfSigned != nil {
 		if err := ctrl.SetControllerReference(cdnos, secret, r.Scheme); err != nil {
 			return nil, err
 		}
@@ -169,10 +179,7 @@ const (
 	secretMountPath = "/certs"
 )
 
-var requiredArgs = map[string]struct{}{
-	"--enable_dataplane": {},
-	"--alsologtostderr":  {},
-}
+// required args feature removed as unused
 
 /*
 This is the function that is responsible for the creation of the pod, including mounting the volumes
@@ -195,28 +202,28 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		return nil, err
 	}
 
-	fmt.Printf("Container statuses for Pod %s:\n", pod.Name)
-	for _, containerStatus := range pod.Status.ContainerStatuses {
-		fmt.Printf("- Name: %s\n", containerStatus.Name)
-		fmt.Printf("  State: %+v\n", containerStatus.State)
-		fmt.Printf("  Ready: %t\n", containerStatus.Ready)
-		fmt.Printf("  Restart Count: %d\n", containerStatus.RestartCount)
-		fmt.Printf("  Image: %s\n", containerStatus.Image)
-		containerState = containerStatus.State
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == "cdnos" {
+			containerState = cs.State
+		}
+		log.Info("container status", "name", cs.Name, "state", cs.State, "ready", cs.Ready, "restarts", cs.RestartCount, "image", cs.Image)
 	}
 
 	if containerState.Terminated != nil {
-		fmt.Printf("container exited, recreating")
+		log.Info("container terminated; deleting pod to recreate", "reason", containerState.Terminated.Reason)
 		if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
 			return nil, err
 		}
+		return pod, r.tryCreatePodWithFallback(ctx, pod)
 	}
 
 	oldPodSpec := pod.Spec.DeepCopy()
 	pod.Spec.Containers[0].Image = cdnos.Spec.Image
 	pod.Spec.InitContainers[0].Image = cdnos.Spec.InitImage
 	pod.Spec.InitContainers[0].Args = []string{fmt.Sprintf("%d", cdnos.Spec.InterfaceCount), fmt.Sprintf("%d", cdnos.Spec.InitSleep)}
-	pod.Spec.Containers[0].Command = []string{cdnos.Spec.Command}
+	if cdnos.Spec.Command != "" {
+		pod.Spec.Containers[0].Command = []string{cdnos.Spec.Command}
+	}
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
 	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
 	pod.Spec.Containers[0].Resources = Limits
@@ -247,7 +254,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 
 	// Check if the specified field exists in the Env slice
 	if checkFieldExists(cdnosEnv, tsfieldName) {
-		fmt.Println(tsfieldName, "is present")
+		log.Info("env present", "name", tsfieldName)
 		tspath = "/ts_vol"
 	}
 	if checkFieldExists(cdnosEnv, corefieldName) {
@@ -255,19 +262,10 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	}
 	if checkFieldExists(cdnosEnv, redisfieldName) {
 		redispath = "/redis_vol"
-		fmt.Println(redispath, "is present")
+		log.Info("env present", "name", redisfieldName)
 	}
 
-	for _, arg := range pod.Spec.Containers[0].Args {
-		delete(requiredArgs, arg)
-	}
-	sortedArgs := make([]string, 0, len(requiredArgs))
-	for arg := range requiredArgs {
-		sortedArgs = append(sortedArgs, arg)
-	}
-	sort.Strings(sortedArgs)
-	// in case we dont need args remove this line
-	//pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, sortedArgs...)
+	// removed requiredArgs logic
 
 	mounts := map[string]corev1.VolumeMount{}
 	volumes := map[string]corev1.Volume{}
@@ -296,10 +294,19 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		MountPath: redispath,
 	}
 
-	newCoreMount := corev1.VolumeMount{
-		Name:        "core",
-		MountPath:   corepath,
-		SubPathExpr: "$(POD_NAME)",
+	useHostPathCore := hostCoreDirExists()
+	var newCoreMount corev1.VolumeMount
+	if useHostPathCore {
+		newCoreMount = corev1.VolumeMount{
+			Name:        "core",
+			MountPath:   corepath,
+			SubPathExpr: "$(POD_NAME)",
+		}
+	} else {
+		newCoreMount = corev1.VolumeMount{
+			Name:      "core",
+			MountPath: corepath,
+		}
 	}
 	// Detect mount changes
 	if !coreMountExists || oldCoreMount.SubPathExpr != newCoreMount.SubPathExpr || oldCoreMount.MountPath != newCoreMount.MountPath {
@@ -314,7 +321,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 
 	// Add the ConfigMap volume and volume mount if mentioned
 	if cdnos.Spec.ConfigPath != "" && cdnos.Spec.ConfigFile != "" {
-		fmt.Println(cdnos.Name, "has a config")
+		log.Info("config present", "name", cdnos.Name)
 		configMapName := cdnos.Name + "-config"
 		volumes["config"] = corev1.Volume{
 			Name: "config",
@@ -327,9 +334,18 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 			},
 		}
 
-		mounts["config"] = corev1.VolumeMount{
-			Name:      "config",
-			MountPath: cdnos.Spec.ConfigPath,
+		// Mount a single file if ConfigFile specified; otherwise mount whole directory
+		if cdnos.Spec.ConfigFile != "" {
+			mounts["config"] = corev1.VolumeMount{
+				Name:      "config",
+				MountPath: filepath.Join(cdnos.Spec.ConfigPath, cdnos.Spec.ConfigFile),
+				SubPath:   cdnos.Spec.ConfigFile,
+			}
+		} else {
+			mounts["config"] = corev1.VolumeMount{
+				Name:      "config",
+				MountPath: cdnos.Spec.ConfigPath,
+			}
 		}
 	}
 
@@ -350,24 +366,52 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		},
 	}
 
-	// Use HostPath /core only if it exists on the node (do not create parent). Subdir is created via SubPathExpr
-	hostPathDir := corev1.HostPathDirectory
-	coreHostPath := "/core"
-	log.Info("configuring core volume to use HostPath", "hostPath", coreHostPath, "mountPath", corepath)
-	newCoreVol := corev1.Volume{
-		Name: "core",
-		VolumeSource: corev1.VolumeSource{
-			HostPath: &corev1.HostPathVolumeSource{
-				Path: coreHostPath,
-				Type: &hostPathDir,
+	var newCoreVol corev1.Volume
+	if useHostPathCore {
+		// Use HostPath /core only if it exists (do not create parent)
+		hostPathDir := corev1.HostPathDirectory
+		coreHostPath := "/core"
+		log.Info("configuring core volume to use HostPath", "hostPath", coreHostPath, "mountPath", corepath)
+		newCoreVol = corev1.Volume{
+			Name: "core",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: coreHostPath,
+					Type: &hostPathDir,
+				},
 			},
-		},
+		}
+	} else {
+		log.Info("/core not found in controller context; using EmptyDir for core volume", "mountPath", corepath)
+		newCoreVol = corev1.Volume{
+			Name: "core",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
 	}
 	// Detect volume changes
 	if !coreVolExists || oldCoreVol.HostPath == nil || oldCoreVol.HostPath.Path != newCoreVol.HostPath.Path {
 		changedMounts = true
 	}
 	volumes["core"] = newCoreVol
+
+	// If kubelet reported FailedMount for HostPath /core on this pod, fallback to EmptyDir
+	if hasCoreFailedMountEvent(ctx, r.Client, pod) {
+		log.Info("Detected FailedMount for HostPath /core via events; falling back to EmptyDir for core volume")
+		volumes["core"] = corev1.Volume{
+			Name: "core",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+		// Remove subPath when falling back to EmptyDir
+		mounts["core"] = corev1.VolumeMount{
+			Name:      "core",
+			MountPath: corepath,
+		}
+		changedMounts = true
+	}
 
 	// If the container is stuck waiting with hostPath/mount errors (likely /core doesn't exist), fallback to EmptyDir
 	if containerState.Waiting != nil {
@@ -418,9 +462,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		delete(volumes, "tls")
 		changedMounts = true
 	}
-	if secretName != "" {
-		//pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, "--tls_key_file", filepath.Join(secretMountPath, "tls.key"), "--tls_cert_file", filepath.Join(secretMountPath, "tls.crt"))
-	}
+	// pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, "--tls_key_file", filepath.Join(secretMountPath, "tls.key"), "--tls_cert_file", filepath.Join(secretMountPath, "tls.crt"))
 
 	// Ensure initial pod gets volumes/mounts applied
 	if newPod {
@@ -576,6 +618,46 @@ func checkFieldExists(env []corev1.EnvVar, fieldName string) bool {
 	for _, item := range env {
 		if item.Name == fieldName {
 			return true
+		}
+	}
+	return false
+}
+
+// hostCoreDirExists returns true if /core exists in the controller runtime environment.
+// Note: This is a heuristic and may not reflect the node filesystem where the Pod will run.
+func hostCoreDirExists() bool {
+	if info, err := os.Stat("/core"); err == nil && info.IsDir() {
+		return true
+	}
+	return false
+}
+
+// podHasCoreHostPath returns true if the pod has a volume named "core" with HostPath "/core" (indicating we are trying HostPath strategy)
+func podHasCoreHostPath(pod *corev1.Pod) bool {
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == "core" && v.HostPath != nil && v.HostPath.Path == "/core" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasCoreFailedMountEvent checks pod events for FailedMount related to /core HostPath
+func hasCoreFailedMountEvent(ctx context.Context, c client.Client, pod *corev1.Pod) bool {
+	var evList corev1.EventList
+	if err := c.List(ctx, &evList, client.InNamespace(pod.Namespace)); err != nil {
+		return false
+	}
+	for _, e := range evList.Items {
+		if e.InvolvedObject.UID != pod.UID {
+			continue
+		}
+		msg := strings.ToLower(e.Message)
+		reason := strings.ToLower(e.Reason)
+		if strings.Contains(reason, "failedmount") || strings.Contains(msg, "failedmount") || strings.Contains(msg, "mountvolume.setup failed") {
+			if strings.Contains(msg, "/core") && (strings.Contains(msg, "hostpath") || strings.Contains(msg, "not a directory") || strings.Contains(msg, "no such file") || strings.Contains(msg, "does not exist")) {
+				return true
+			}
 		}
 	}
 	return false

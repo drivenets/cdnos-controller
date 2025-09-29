@@ -45,6 +45,8 @@ var (
 var (
 	// Bump this minor version as needed. Can be overridden via env CDNOS_MANAGER_VERSION
 	versionMinor = "0.1.0"
+	// Major (image tag) version; injected via ldflags or env CDNOS_MANAGER_MAJOR
+	versionMajor = "dev"
 )
 
 func init() {
@@ -74,7 +76,10 @@ func main() {
 	if v := os.Getenv("CDNOS_MANAGER_VERSION"); v != "" {
 		versionMinor = v
 	}
-	setupLog.Info("manager startup", "versionMinor", versionMinor, "timestamp", time.Now().UTC().Format(time.RFC3339))
+	if v := os.Getenv("CDNOS_MANAGER_MAJOR"); v != "" {
+		versionMajor = v
+	}
+	setupLog.Info("manager startup", "versionMajor", versionMajor, "versionMinor", versionMinor, "timestamp", time.Now().UTC().Format(time.RFC3339))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
