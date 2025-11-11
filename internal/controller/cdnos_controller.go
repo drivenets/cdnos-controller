@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	//"path/filepath"
 	"sort"
@@ -127,14 +128,14 @@ func (r *CdnosReconciler) reconcileSecrets(ctx context.Context, cdnos *cdnosv1.C
 	}
 
 	if !apierrors.IsNotFound(err) {
-		if cdnos.Spec.TLS.SelfSigned == nil {
+		if cdnos.Spec.TLS == nil || cdnos.Spec.TLS.SelfSigned == nil {
 			log.Info("no tls config and secret exists, deleting it.")
 			return nil, r.Delete(ctx, secret)
 		}
 		return secret, nil
 	}
 
-	if cdnos.Spec.TLS.SelfSigned != nil {
+	if cdnos.Spec.TLS != nil && cdnos.Spec.TLS.SelfSigned != nil {
 		if err := ctrl.SetControllerReference(cdnos, secret, r.Scheme); err != nil {
 			return nil, err
 		}
@@ -194,7 +195,9 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		containerState = containerStatus.State
 	}
 
-	if containerState.Terminated != nil {
+	isMcdnosImage := strings.Contains(cdnos.Spec.Image, "mcdnos")
+
+	if containerState.Terminated != nil && !isMcdnosImage {
 		fmt.Printf("container exited, recreating")
 		if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
 			return nil, err
@@ -206,33 +209,24 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	pod.Spec.InitContainers[0].Image = cdnos.Spec.InitImage
 	pod.Spec.InitContainers[0].Args = []string{fmt.Sprintf("%d", cdnos.Spec.InterfaceCount), fmt.Sprintf("%d", cdnos.Spec.InitSleep)}
 	pod.Spec.Containers[0].Command = []string{cdnos.Spec.Command}
+	if isMcdnosImage {
+		pod.Spec.Containers[0].Command = []string{"/sbin/init", "--log-level=err"}
+		log.Info("mcdnos image detected", "command", pod.Spec.Containers[0].Command)
+	}
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
 	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
 	pod.Spec.Containers[0].Resources = Limits
 
 	// Assuming cdnos.Spec.Env is of type []corev1.EnvVar
 	cdnosEnv := cdnos.Spec.Env
+	fmt.Printf("cdnosEnv: %+v\n", cdnosEnv)
 
 	// Specify the field name to check
-	tsfieldName := "ALLOC_TS"
-	corefieldName := "ALLOC_CORE"
-	redisfieldName := "ALLOC_REDIS"
 	tspath := "/techsupport"
 	corepath := "/core"
 	redispath := "/redis"
-
-	// Check if the specified field exists in the Env slice
-	if checkFieldExists(cdnosEnv, tsfieldName) {
-		fmt.Println(tsfieldName, "is present")
-		tspath = "/ts_vol"
-	}
-	if checkFieldExists(cdnosEnv, corefieldName) {
-		corepath = "/core_vol"
-	}
-	if checkFieldExists(cdnosEnv, redisfieldName) {
-		redispath = "/redis_vol"
-		fmt.Println(redispath, "is present")
-	}
+	networdkpath := "/usr/lib/systemd/network"
+	dockerpath := "/docker"
 
 	for _, arg := range pod.Spec.Containers[0].Args {
 		if _, ok := requiredArgs[arg]; ok {
@@ -278,6 +272,19 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		MountPath: tspath,
 	}
 
+	if isMcdnosImage {
+		log.Info("mcdnos image detected", "image", cdnos.Spec.Image)
+		mounts["networkd"] = corev1.VolumeMount{
+			Name:      "networkd",
+			MountPath: networdkpath,
+		}
+		mounts["docker"] = corev1.VolumeMount{
+			Name:      "docker",
+			MountPath: dockerpath,
+		}
+
+	}
+
 	// Add the ConfigMap volume and volume mount if mentioned
 	if cdnos.Spec.ConfigPath != "" && cdnos.Spec.ConfigFile != "" {
 		fmt.Println(cdnos.Name, "has a config")
@@ -304,7 +311,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		Name: "modules",
 		VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{
-				Path: "/lib/modules", // Replace with the actual host path to the modules directory
+				Path: "/lib/modules",
 			},
 		},
 	}
@@ -328,6 +335,22 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
+	}
+
+	if isMcdnosImage {
+		volumes["networkd"] = corev1.Volume{
+			Name: "networkd",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+
+		volumes["docker"] = corev1.Volume{
+			Name: "docker",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
 	}
 
 	var changedMounts bool
