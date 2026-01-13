@@ -27,6 +27,7 @@ import (
 	cdnosv1 "github.com/drivenets/cdnos-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -44,13 +45,16 @@ import (
 // CdnosReconciler reconciles a Cdnos object
 type CdnosReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	APIReader client.Reader
 }
 
 //+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=pods;services;secrets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -80,6 +84,12 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if secret != nil {
 		secretName = secret.GetName()
 		_ = secretName
+	}
+
+	// Ensure per-instance ServiceAccount and RBAC for querying services
+	if _, err := r.reconcileRBAC(ctx, cdnos); err != nil {
+		log.Error(err, "unable to reconcile rbac")
+		return ctrl.Result{}, err
 	}
 
 	pod, err := r.reconcilePod(ctx, cdnos, secretName)
@@ -213,6 +223,8 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		pod.Spec.Containers[0].Command = []string{"/sbin/init", "--log-level=err"}
 		log.Info("mcdnos image detected", "command", pod.Spec.Containers[0].Command)
 	}
+	// Use a dedicated ServiceAccount per Cdnos for API access
+	pod.Spec.ServiceAccountName = cdnos.Name
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
 	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
 	pod.Spec.Containers[0].Resources = Limits
@@ -283,6 +295,12 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 			MountPath: dockerpath,
 		}
 
+		// Map service account token into /tokens for MCDNOS
+		mounts["tokens"] = corev1.VolumeMount{
+			Name:      "tokens",
+			MountPath: "/var/kubernetes/secrets/tokens",
+			ReadOnly:  true,
+		}
 	}
 
 	// Add the ConfigMap volume and volume mount if mentioned
@@ -349,6 +367,34 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 			Name: "docker",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+
+		// Project full service account files into /tokens for MCDNOS
+		volumes["tokens"] = corev1.Volume{
+			Name: "tokens",
+			VolumeSource: corev1.VolumeSource{
+				Projected: &corev1.ProjectedVolumeSource{
+					Sources: []corev1.VolumeProjection{
+						{
+							ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+								Path: "token",
+							},
+						},
+						{
+							DownwardAPI: &corev1.DownwardAPIProjection{
+								Items: []corev1.DownwardAPIVolumeFile{
+									{
+										Path: "namespace",
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.namespace",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
 			},
 		}
 	}
@@ -430,6 +476,107 @@ func (r *CdnosReconciler) setupInitialPod(pod *corev1.Pod, cdnos *cdnosv1.Cdnos)
 		return err
 	}
 	return nil
+}
+
+// reconcileRBAC ensures a ServiceAccount, Role, and RoleBinding exist to allow the Cdnos pod
+// to query Kubernetes Services in its namespace.
+func (r *CdnosReconciler) reconcileRBAC(ctx context.Context, cdnos *cdnosv1.Cdnos) (string, error) {
+	log := log.FromContext(ctx)
+	saName := cdnos.Name
+	roleName := fmt.Sprintf("%s-svc-reader", cdnos.Name)
+	rbName := roleName
+
+	// ServiceAccount: try create first (avoids needing get/list permissions)
+	sa := corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      saName,
+			Namespace: cdnos.Namespace,
+			Labels: map[string]string{
+				"app":  cdnos.Name,
+				"topo": cdnos.Namespace,
+			},
+		},
+	}
+	if err := ctrl.SetControllerReference(cdnos, &sa, r.Scheme); err != nil {
+		return "", err
+	}
+	if err := r.Create(ctx, &sa); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return "", err
+		}
+	} else {
+		log.Info("created serviceaccount", "name", saName)
+	}
+
+	// Role allowing restricted access to the Cdnos service in this namespace
+	// Limit to only getting the specific Service created for this Cdnos instance,
+	// which is sufficient to read the MetalLB-assigned VIP from status.
+	svcName := fmt.Sprintf("service-%s", cdnos.Name)
+	desiredRules := []rbacv1.PolicyRule{
+		{
+			APIGroups:     []string{""},
+			Resources:     []string{"services"},
+			ResourceNames: []string{svcName},
+			Verbs:         []string{"get"},
+		},
+	}
+	role := rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      roleName,
+			Namespace: cdnos.Namespace,
+			Labels: map[string]string{
+				"app":  cdnos.Name,
+				"topo": cdnos.Namespace,
+			},
+		},
+		Rules: desiredRules,
+	}
+	if err := ctrl.SetControllerReference(cdnos, &role, r.Scheme); err != nil {
+		return "", err
+	}
+	if err := r.Create(ctx, &role); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return "", err
+		}
+	} else {
+		log.Info("created role", "name", roleName)
+	}
+
+	// RoleBinding to bind the ServiceAccount to the Role
+	rb := rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rbName,
+			Namespace: cdnos.Namespace,
+			Labels: map[string]string{
+				"app":  cdnos.Name,
+				"topo": cdnos.Namespace,
+			},
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      saName,
+				Namespace: cdnos.Namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     roleName,
+		},
+	}
+	if err := ctrl.SetControllerReference(cdnos, &rb, r.Scheme); err != nil {
+		return "", err
+	}
+	if err := r.Create(ctx, &rb); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return "", err
+		}
+	} else {
+		log.Info("created rolebinding", "name", rbName)
+	}
+
+	return saName, nil
 }
 
 // Check if the given field name exists in the Env slice
