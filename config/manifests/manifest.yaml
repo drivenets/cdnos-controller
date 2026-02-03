@@ -16,20 +16,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.13.0
-  name: cdnoss.cdnos.dev.drivenets.net
+  name: cdnos.cdnos.dev.drivenets.net
 spec:
   group: cdnos.dev.drivenets.net
   names:
     kind: Cdnos
     listKind: CdnosList
-    plural: cdnoss
+    plural: cdnos
     singular: cdnos
   scope: Namespaced
   versions:
   - name: v1
     schema:
       openAPIV3Schema:
-        description: Cdnos is the Schema for the cdnoss API
+        description: Cdnos is the Schema for the cdnos API
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -188,6 +188,18 @@ spec:
                 description: InterfaceCount is number of interfaces to be attached
                   to the pod.
                 type: integer
+              labels:
+                additionalProperties:
+                  type: string
+                description: Metadata labels describing the node.
+                type: object
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: NodeSelector is a selector which must be true for the
+                  pod to fit on a node. Selector which must match a node's labels
+                  for the pod to be scheduled on that node.
+                type: object
               ports:
                 additionalProperties:
                   description: ServicePort describes an external L4 port on the device.
@@ -251,8 +263,7 @@ spec:
                     description: 'Requests describes the minimum amount of compute
                       resources required. If Requests is omitted for a container,
                       it defaults to Limits if that is explicitly specified, otherwise
-                      to an implementation-defined value. Requests cannot exceed Limits.
-                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
+                      to an implementation-defined value. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/'
                     type: object
                 type: object
               tls:
@@ -358,7 +369,7 @@ rules:
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss
+  - cdnos
   verbs:
   - create
   - delete
@@ -370,13 +381,13 @@ rules:
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss/finalizers
+  - cdnos/finalizers
   verbs:
   - update
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss/status
+  - cdnos/status
   verbs:
   - get
   - patch
@@ -387,6 +398,31 @@ rules:
   - pods
   - secrets
   - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
   verbs:
   - create
   - delete

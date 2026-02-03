@@ -49,9 +49,9 @@ type CdnosReconciler struct {
 	APIReader client.Reader
 }
 
-//+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss/finalizers,verbs=update
+//+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnos,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnos/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnos/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=pods;services;secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
@@ -229,8 +229,11 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
 	pod.Spec.Containers[0].Resources = Limits
 	// Apply nodeSelector if specified
-	if cdnos.Spec.NodeSelector != nil {
+	if len(cdnos.Spec.NodeSelector) > 0 {
 		pod.Spec.NodeSelector = cdnos.Spec.NodeSelector
+	} else {
+		// Clear nodeSelector if not specified
+		pod.Spec.NodeSelector = nil
 	}
 
 	// Assuming cdnos.Spec.Env is of type []corev1.EnvVar
@@ -245,9 +248,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	dockerpath := "/docker"
 
 	for _, arg := range pod.Spec.Containers[0].Args {
-		if _, ok := requiredArgs[arg]; ok {
-			delete(requiredArgs, arg)
-		}
+		delete(requiredArgs, arg)
 	}
 	sortedArgs := make([]string, 0, len(requiredArgs))
 	for arg := range requiredArgs {

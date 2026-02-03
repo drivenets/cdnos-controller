@@ -25,7 +25,7 @@ import (
 
 type CdnosV1Interface interface {
 	RESTClient() rest.Interface
-	CdnossGetter
+	CdnosGetter
 }
 
 // CdnosV1Client is used to interact with features provided by the cdnos group.
@@ -33,8 +33,8 @@ type CdnosV1Client struct {
 	restClient rest.Interface
 }
 
-func (c *CdnosV1Client) Cdnoss(namespace string) CdnosInterface {
-	return newCdnoss(c, namespace)
+func (c *CdnosV1Client) Cdnos(namespace string) CdnosInterface {
+	return newCdnos(c, namespace)
 }
 
 // NewForConfig creates a new CdnosV1Client for the given config.

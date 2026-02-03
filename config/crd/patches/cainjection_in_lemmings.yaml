@@ -4,4 +4,4 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: $(CERTIFICATE_NAMESPACE)/$(CERTIFICATE_NAME)
-  name: cdnoss.cdnos.dev.drivenets.net
+  name: cdnos.cdnos.dev.drivenets.net

@@ -16,20 +16,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.13.0
-  name: cdnoss.cdnos.dev.drivenets.net
+  name: cdnos.cdnos.dev.drivenets.net
 spec:
   group: cdnos.dev.drivenets.net
   names:
     kind: Cdnos
     listKind: CdnosList
-    plural: cdnoss
+    plural: cdnos
     singular: cdnos
   scope: Namespaced
   versions:
   - name: v1
     schema:
       openAPIV3Schema:
-        description: Cdnos is the Schema for the cdnoss API
+        description: Cdnos is the Schema for the cdnos API
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -358,7 +358,7 @@ rules:
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss
+  - cdnos
   verbs:
   - create
   - delete
@@ -370,13 +370,13 @@ rules:
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss/finalizers
+  - cdnos/finalizers
   verbs:
   - update
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss/status
+  - cdnos/status
   verbs:
   - get
   - patch

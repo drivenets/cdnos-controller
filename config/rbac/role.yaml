@@ -7,7 +7,7 @@ rules:
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss
+  - cdnos
   verbs:
   - create
   - delete
@@ -19,13 +19,13 @@ rules:
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss/finalizers
+  - cdnos/finalizers
   verbs:
   - update
 - apiGroups:
   - cdnos.dev.drivenets.net
   resources:
-  - cdnoss/status
+  - cdnos/status
   verbs:
   - get
   - patch

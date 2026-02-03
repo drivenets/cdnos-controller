@@ -27,10 +27,10 @@ import (
 	rest "k8s.io/client-go/rest"
 )
 
-// CdnossGetter has a method to return a CdnosInterface.
+// CdnosGetter has a method to return a CdnosInterface.
 // A group's client should implement this interface.
-type CdnossGetter interface {
-	Cdnoss(namespace string) CdnosInterface
+type CdnosGetter interface {
+	Cdnos(namespace string) CdnosInterface
 }
 
 // CdnosInterface has methods to work with Cdnos resources.
@@ -47,26 +47,26 @@ type CdnosInterface interface {
 	CdnosExpansion
 }
 
-// cdnoss implements CdnosInterface
-type cdnoss struct {
+// cdnos implements CdnosInterface
+type cdnos struct {
 	client rest.Interface
 	ns     string
 }
 
-// newCdnoss returns a Cdnoss
-func newCdnoss(c *CdnosV1Client, namespace string) *cdnoss {
-	return &cdnoss{
+// newCdnos returns a Cdnos
+func newCdnos(c *CdnosV1Client, namespace string) *cdnos {
+	return &cdnos{
 		client: c.RESTClient(),
 		ns:     namespace,
 	}
 }
 
 // Get takes name of the cdnos, and returns the corresponding cdnos object, and an error if there is any.
-func (c *cdnoss) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.Cdnos, err error) {
+func (c *cdnos) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Get().
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
 		Do(ctx).
@@ -75,7 +75,7 @@ func (c *cdnoss) Get(ctx context.Context, name string, options v1.GetOptions) (r
 }
 
 // List takes label and field selectors, and returns the list of Cdnos that match those selectors.
-func (c *cdnoss) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.CdnosList, err error) {
+func (c *cdnos) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.CdnosList, err error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -83,7 +83,7 @@ func (c *cdnoss) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha
 	result = &v1alpha1.CdnosList{}
 	err = c.client.Get().
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
 		Do(ctx).
@@ -91,8 +91,8 @@ func (c *cdnoss) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested cdnoss.
-func (c *cdnoss) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Interface that watches the requested cdnos.
+func (c *cdnos) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -100,18 +100,18 @@ func (c *cdnoss) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interfac
 	opts.Watch = true
 	return c.client.Get().
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
 		Watch(ctx)
 }
 
 // Create takes the representation of a cdnos and creates it.  Returns the server's representation of the cdnos, and an error, if there is any.
-func (c *cdnoss) Create(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.CreateOptions) (result *v1alpha1.Cdnos, err error) {
+func (c *cdnos) Create(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.CreateOptions) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Post().
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(cdnos).
 		Do(ctx).
@@ -120,11 +120,11 @@ func (c *cdnoss) Create(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.Crea
 }
 
 // Update takes the representation of a cdnos and updates it. Returns the server's representation of the cdnos, and an error, if there is any.
-func (c *cdnoss) Update(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.UpdateOptions) (result *v1alpha1.Cdnos, err error) {
+func (c *cdnos) Update(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.UpdateOptions) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Put().
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		Name(cdnos.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(cdnos).
@@ -135,11 +135,11 @@ func (c *cdnoss) Update(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.Upda
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *cdnoss) UpdateStatus(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.UpdateOptions) (result *v1alpha1.Cdnos, err error) {
+func (c *cdnos) UpdateStatus(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v1.UpdateOptions) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Put().
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		Name(cdnos.Name).
 		SubResource("status").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -150,10 +150,10 @@ func (c *cdnoss) UpdateStatus(ctx context.Context, cdnos *v1alpha1.Cdnos, opts v
 }
 
 // Delete takes name of the cdnos and deletes it. Returns an error if one occurs.
-func (c *cdnoss) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
+func (c *cdnos) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		Name(name).
 		Body(&opts).
 		Do(ctx).
@@ -161,14 +161,14 @@ func (c *cdnoss) Delete(ctx context.Context, name string, opts v1.DeleteOptions)
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *cdnoss) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
+func (c *cdnos) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
 	var timeout time.Duration
 	if listOpts.TimeoutSeconds != nil {
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
 		Body(&opts).
@@ -177,11 +177,11 @@ func (c *cdnoss) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, li
 }
 
 // Patch applies the patch and returns the patched cdnos.
-func (c *cdnoss) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.Cdnos, err error) {
+func (c *cdnos) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.Cdnos, err error) {
 	result = &v1alpha1.Cdnos{}
 	err = c.client.Patch(pt).
 		Namespace(c.ns).
-		Resource("cdnoss").
+		Resource("cdnos").
 		Name(name).
 		SubResource(subresources...).
 		VersionedParams(&opts, scheme.ParameterCodec).
