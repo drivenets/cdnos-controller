@@ -596,7 +596,7 @@ spec:
         - --zap-log-level=debug
         command:
         - /manager
-        image: public.ecr.aws/dn/cdnos-controller:1.7.7
+        image: public.ecr.aws/dn/cdnos-controller:1.7.8
         livenessProbe:
           httpGet:
             path: /healthz
