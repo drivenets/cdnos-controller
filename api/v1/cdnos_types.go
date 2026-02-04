@@ -106,6 +106,7 @@ type CdnosStatus struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:resource:path=cdnoss,singular=cdnos
 
 // Cdnos is the Schema for the cdnos API
 type Cdnos struct {
