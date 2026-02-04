@@ -205,7 +205,14 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		containerState = containerStatus.State
 	}
 
-	isMcdnosImage := strings.Contains(cdnos.Spec.Image, "mcdnos")
+	// Check if model is explicitly set in labels, otherwise fall back to image name
+	isMcdnosImage := false
+	if model, ok := cdnos.Labels["model"]; ok && strings.ToUpper(model) == "MCDNOS" {
+		isMcdnosImage = true
+	} else {
+		// Fall back to checking image name if model label is not set
+		isMcdnosImage = strings.Contains(cdnos.Spec.Image, "mcdnos")
+	}
 
 	if containerState.Terminated != nil && !isMcdnosImage {
 		fmt.Printf("container exited, recreating")
