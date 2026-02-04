@@ -228,6 +228,13 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
 	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
 	pod.Spec.Containers[0].Resources = Limits
+	// Apply nodeSelector if specified
+	if len(cdnos.Spec.NodeSelector) > 0 {
+		pod.Spec.NodeSelector = cdnos.Spec.NodeSelector
+	} else {
+		// Clear nodeSelector if not specified
+		pod.Spec.NodeSelector = nil
+	}
 
 	// Assuming cdnos.Spec.Env is of type []corev1.EnvVar
 	cdnosEnv := cdnos.Spec.Env
