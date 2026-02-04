@@ -395,6 +395,25 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - create
+  - get
+  - patch
+  - update
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - roles
+  - rolebindings
+  verbs:
+  - create
+  - get
+  - patch
+  - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -577,7 +596,7 @@ spec:
         - --zap-log-level=debug
         command:
         - /manager
-        image: public.ecr.aws/dn/cdnos-controller:1.7.5
+        image: public.ecr.aws/dn/cdnos-controller:1.7.7
         livenessProbe:
           httpGet:
             path: /healthz
@@ -594,10 +613,10 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 128Mi
+            memory: 1024Mi
           requests:
             cpu: 10m
-            memory: 64Mi
+            memory: 1024Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
