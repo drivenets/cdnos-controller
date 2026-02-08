@@ -238,9 +238,11 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	// Apply nodeSelector if specified
 	if len(cdnos.Spec.NodeSelector) > 0 {
 		pod.Spec.NodeSelector = cdnos.Spec.NodeSelector
+		log.Info("applying nodeSelector to pod", "nodeSelector", cdnos.Spec.NodeSelector, "pod", pod.Name, "namespace", pod.Namespace)
 	} else {
 		// Clear nodeSelector if not specified
 		pod.Spec.NodeSelector = nil
+		log.Info("no nodeSelector specified, clearing pod nodeSelector", "pod", pod.Name, "namespace", pod.Namespace)
 	}
 
 	// Assuming cdnos.Spec.Env is of type []corev1.EnvVar
