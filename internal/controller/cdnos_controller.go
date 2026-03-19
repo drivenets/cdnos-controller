@@ -71,8 +71,11 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	cdnos := &cdnosv1.Cdnos{}
 
 	if err := r.Get(ctx, req.NamespacedName, cdnos); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
 		log.Error(err, "unable to fetch Cdnos")
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return ctrl.Result{}, err
 	}
 
 	secret, err := r.reconcileSecrets(ctx, cdnos)

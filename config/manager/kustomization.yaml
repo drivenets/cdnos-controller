@@ -4,5 +4,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: public.ecr.aws/dn/cdnos-controller
-  newTag: 1.7.9
+  newName: public.ecr.aws/a7o1c0j7/cdnos_controller
+  newTag: 1.8.0
