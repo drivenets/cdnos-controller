@@ -19,10 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
-
-	//"path/filepath"
 	"sort"
+	"strings"
 
 	cdnosv1 "github.com/drivenets/cdnos-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
@@ -39,6 +37,7 @@ import (
 	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	controllerruntime "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -47,6 +46,9 @@ type CdnosReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	APIReader client.Reader
+	// MaxConcurrentReconciles controls the number of concurrent reconciles.
+	// If <= 0, controller-runtime's default (1) is used.
+	MaxConcurrentReconciles int
 }
 
 //+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss,verbs=get;list;watch;create;update;patch;delete
@@ -71,8 +73,13 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	cdnos := &cdnosv1.Cdnos{}
 
 	if err := r.Get(ctx, req.NamespacedName, cdnos); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Normal path on delete: owned objects are garbage-collected via
+			// owner references, nothing for us to do.
+			return ctrl.Result{}, nil
+		}
 		log.Error(err, "unable to fetch Cdnos")
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return ctrl.Result{}, err
 	}
 
 	secret, err := r.reconcileSecrets(ctx, cdnos)
@@ -99,25 +106,32 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	if err := r.reconcileService(ctx, cdnos); err != nil {
-		log.Error(err, "unable to get reconcile service: %v")
+		log.Error(err, "unable to reconcile service")
 		return ctrl.Result{}, err
 	}
 
+	var desiredPhase cdnosv1.CdnosPhase
 	switch pod.Status.Phase {
 	case corev1.PodRunning:
-		cdnos.Status.Phase = cdnosv1.Running
+		desiredPhase = cdnosv1.Running
 	case corev1.PodFailed:
-		cdnos.Status.Phase = cdnosv1.Failed
+		desiredPhase = cdnosv1.Failed
 	default:
-		cdnos.Status.Phase = cdnosv1.Unknown
+		desiredPhase = cdnosv1.Unknown
 	}
-	cdnos.Status.Message = fmt.Sprintf("Pod Details: %s", pod.Status.Message)
-	if err := r.Status().Update(ctx, cdnos); err != nil {
-		log.Error(err, "unable to update cdnos status")
-		return ctrl.Result{}, err
+	desiredMessage := fmt.Sprintf("Pod Details: %s", pod.Status.Message)
+
+	if cdnos.Status.Phase != desiredPhase || cdnos.Status.Message != desiredMessage {
+		patch := client.MergeFrom(cdnos.DeepCopy())
+		cdnos.Status.Phase = desiredPhase
+		cdnos.Status.Message = desiredMessage
+		if err := r.Status().Patch(ctx, cdnos, patch); err != nil {
+			log.Error(err, "unable to patch cdnos status")
+			return ctrl.Result{}, err
+		}
 	}
 
-	log.Info("Cdnos reconciled", "Name", cdnos.Name, "Image", cdnos.Spec.Image, "Namespace", cdnos.Namespace)
+	log.V(1).Info("Cdnos reconciled", "Name", cdnos.Name, "Image", cdnos.Spec.Image, "Namespace", cdnos.Namespace)
 
 	return ctrl.Result{}, nil
 }
@@ -161,7 +175,7 @@ func (r *CdnosReconciler) reconcileSecrets(ctx context.Context, cdnos *cdnosv1.C
 		log.Info("tls config not empty and secret doesn't exist, creating it.")
 		return secret, r.Create(ctx, secret)
 	}
-	log.Info("no tls config and secret doesn't exist, doing nothing.")
+	log.V(1).Info("no tls config and secret doesn't exist, doing nothing.")
 	return nil, nil
 }
 
@@ -169,10 +183,23 @@ const (
 	secretMountPath = "/certs"
 )
 
-var requiredArgs = map[string]struct{}{
-	"--enable_dataplane": {},
-	"--alsologtostderr":  {},
-}
+// NOTE: there used to be a package-level requiredArgs map here, declaring
+// container args ("--enable_dataplane", "--alsologtostderr") that the
+// controller would inject onto every cdnos pod if missing. That map and
+// its consumer loop were removed because:
+//
+//  1. The consumer (`pod.Spec.Containers[0].Args = append(..., sortedArgs...)`)
+//     was already commented out, so nothing was being injected.
+//  2. The bookkeeping mutated the shared package-level map (`delete` per
+//     observed arg) on every reconcile, which both raced across concurrent
+//     reconciles and permanently drained the map after the first reconcile
+//     that saw the args - meaning later Cdnos instances could never see
+//     them either.
+//
+// If you need to default args on every cdnos pod again, do it per-reconcile
+// (no shared mutable state), e.g. by merging a local slice into
+// pod.Spec.Containers[0].Args inside reconcilePod, or - preferred - by
+// surfacing the knob through CdnosSpec.Args so it is observable on the CR.
 
 /*
 This is the function that is responsible for the creation of the pod, including mounting the volumes
@@ -195,13 +222,15 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		return nil, err
 	}
 
-	fmt.Printf("Container statuses for Pod %s:\n", pod.Name)
 	for _, containerStatus := range pod.Status.ContainerStatuses {
-		fmt.Printf("- Name: %s\n", containerStatus.Name)
-		fmt.Printf("  State: %+v\n", containerStatus.State)
-		fmt.Printf("  Ready: %t\n", containerStatus.Ready)
-		fmt.Printf("  Restart Count: %d\n", containerStatus.RestartCount)
-		fmt.Printf("  Image: %s\n", containerStatus.Image)
+		log.V(1).Info("container status",
+			"pod", pod.Name,
+			"container", containerStatus.Name,
+			"state", containerStatus.State,
+			"ready", containerStatus.Ready,
+			"restartCount", containerStatus.RestartCount,
+			"image", containerStatus.Image,
+		)
 		containerState = containerStatus.State
 	}
 
@@ -215,7 +244,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	}
 
 	if containerState.Terminated != nil && !isMcdnosImage {
-		fmt.Printf("container exited, recreating")
+		log.Info("container exited, recreating pod", "pod", pod.Name)
 		if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
 			return nil, err
 		}
@@ -225,49 +254,39 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	pod.Spec.Containers[0].Image = cdnos.Spec.Image
 	pod.Spec.InitContainers[0].Image = cdnos.Spec.InitImage
 	pod.Spec.InitContainers[0].Args = []string{fmt.Sprintf("%d", cdnos.Spec.InterfaceCount), fmt.Sprintf("%d", cdnos.Spec.InitSleep)}
-	pod.Spec.Containers[0].Command = []string{cdnos.Spec.Command}
 	if isMcdnosImage {
 		pod.Spec.Containers[0].Command = []string{"/sbin/init", "--log-level=err"}
-		log.Info("mcdnos image detected", "command", pod.Spec.Containers[0].Command)
+		pod.Spec.Containers[0].Args = nil
+		log.V(1).Info("mcdnos image detected", "command", pod.Spec.Containers[0].Command)
+	} else if cdnos.Spec.Command != "" {
+		pod.Spec.Containers[0].Command = []string{cdnos.Spec.Command}
+		pod.Spec.Containers[0].Args = cdnos.Spec.Args
+	} else {
+		// Leave Command/Args nil so the container image's default
+		// ENTRYPOINT/CMD is used.
+		pod.Spec.Containers[0].Command = nil
+		pod.Spec.Containers[0].Args = cdnos.Spec.Args
 	}
 	// Use a dedicated ServiceAccount per Cdnos for API access
 	pod.Spec.ServiceAccountName = cdnos.Name
 	pod.Spec.Containers[0].Env = cdnos.Spec.Env
 	Limits := CombineResourceRequirements(cdnos.Labels, cdnos.Spec.Resources)
 	pod.Spec.Containers[0].Resources = Limits
-	// Apply nodeSelector if specified
 	if len(cdnos.Spec.NodeSelector) > 0 {
 		pod.Spec.NodeSelector = cdnos.Spec.NodeSelector
-		log.Info("applying nodeSelector to pod", "nodeSelector", cdnos.Spec.NodeSelector, "pod", pod.Name, "namespace", pod.Namespace)
+		log.V(1).Info("applying nodeSelector to pod", "nodeSelector", cdnos.Spec.NodeSelector, "pod", pod.Name, "namespace", pod.Namespace)
 	} else {
-		// Clear nodeSelector if not specified
 		pod.Spec.NodeSelector = nil
-		log.Info("no nodeSelector specified, clearing pod nodeSelector", "pod", pod.Name, "namespace", pod.Namespace)
+		log.V(1).Info("no nodeSelector specified, clearing pod nodeSelector", "pod", pod.Name, "namespace", pod.Namespace)
 	}
 
-	// Assuming cdnos.Spec.Env is of type []corev1.EnvVar
-	cdnosEnv := cdnos.Spec.Env
-	fmt.Printf("cdnosEnv: %+v\n", cdnosEnv)
+	log.V(1).Info("cdnos env", "env", cdnos.Spec.Env)
 
-	// Specify the field name to check
 	tspath := "/techsupport"
 	corepath := "/core"
 	redispath := "/redis"
 	networdkpath := "/usr/lib/systemd/network"
 	dockerpath := "/docker"
-
-	for _, arg := range pod.Spec.Containers[0].Args {
-		if _, ok := requiredArgs[arg]; ok {
-			delete(requiredArgs, arg)
-		}
-	}
-	sortedArgs := make([]string, 0, len(requiredArgs))
-	for arg := range requiredArgs {
-		sortedArgs = append(sortedArgs, arg)
-	}
-	sort.Strings(sortedArgs)
-	// in case we dont need args remove this line
-	//pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, sortedArgs...)
 
 	mounts := map[string]corev1.VolumeMount{}
 	volumes := map[string]corev1.Volume{}
@@ -301,7 +320,7 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	}
 
 	if isMcdnosImage {
-		log.Info("mcdnos image detected", "image", cdnos.Spec.Image)
+		log.V(1).Info("mcdnos image detected", "image", cdnos.Spec.Image)
 		mounts["networkd"] = corev1.VolumeMount{
 			Name:      "networkd",
 			MountPath: networdkpath,
@@ -319,9 +338,8 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		}
 	}
 
-	// Add the ConfigMap volume and volume mount if mentioned
 	if cdnos.Spec.ConfigPath != "" && cdnos.Spec.ConfigFile != "" {
-		fmt.Println(cdnos.Name, "has a config")
+		log.V(1).Info("cdnos has a config", "name", cdnos.Name)
 		configMapName := cdnos.Name + "-config"
 		volumes["config"] = corev1.Volume{
 			Name: "config",
@@ -437,19 +455,17 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 		delete(volumes, "tls")
 		changedMounts = true
 	}
-	if secretName != "" {
-		//pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, "--tls_key_file", filepath.Join(secretMountPath, "tls.key"), "--tls_cert_file", filepath.Join(secretMountPath, "tls.crt"))
-	}
 
+	// Only rebuild volumes/mounts when the TLS toggle actually changed the
+	// set. At steady state we leave pod.Spec.Volumes/VolumeMounts as the
+	// server returned them: any reorder of equivalent slices would defeat
+	// equality.Semantic.DeepEqual (which does NOT treat slices as unordered)
+	// and trigger spurious pod recreation. When we do rebuild, sort the
+	// outputs by name so the rebuilt slice is deterministic across
+	// reconciles even though the source is a Go map.
 	if changedMounts {
-		pod.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{}
-		pod.Spec.Volumes = []corev1.Volume{}
-		for _, mount := range mounts {
-			pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, mount)
-		}
-		for _, volume := range volumes {
-			pod.Spec.Volumes = append(pod.Spec.Volumes, volume)
-		}
+		pod.Spec.Containers[0].VolumeMounts = sortedVolumeMounts(mounts)
+		pod.Spec.Volumes = sortedVolumes(volumes)
 	}
 
 	if newPod {
@@ -457,15 +473,53 @@ func (r *CdnosReconciler) reconcilePod(ctx context.Context, cdnos *cdnosv1.Cdnos
 	}
 
 	if equality.Semantic.DeepEqual(oldPodSpec, &pod.Spec) {
-		log.Info("pod unchanged, doing nothing")
+		log.V(1).Info("pod unchanged, doing nothing")
 		return pod, nil
 	}
-	log.Info("pod changed, recreating", "diff", cmp.Diff(*oldPodSpec, pod.Spec))
-	// Pods are mostly immutable, so recreate it if the spec changed.
-	if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil {
-		return nil, err
+	log.Info("pod changed, deleting; recreate on next reconcile", "diff", cmp.Diff(*oldPodSpec, pod.Spec))
+	// Pods are mostly immutable, so recreate them if the spec changed.
+	// Use Background propagation: Foreground would have the apiserver wait
+	// for dependents to be GC'd before the Pod object is removed, leaving
+	// it in a "being deleted" state where our immediate Create would race
+	// and lose with "object is being deleted". Background returns quickly;
+	// the Pod's deletion event re-queues this Cdnos and the next reconcile
+	// takes the newPod = true path and Creates a fresh Pod cleanly.
+	if err := r.Delete(ctx, pod, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
+		return nil, client.IgnoreNotFound(err)
 	}
-	return pod, r.Create(ctx, pod)
+	return pod, nil
+}
+
+func sortedVolumeMounts(m map[string]corev1.VolumeMount) []corev1.VolumeMount {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]corev1.VolumeMount, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, m[k])
+	}
+	return out
+}
+
+func sortedVolumes(m map[string]corev1.Volume) []corev1.Volume {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]corev1.Volume, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, m[k])
+	}
+	return out
 }
 
 // setupInitialPod creates the initial pod configuration for fields that don't change.
@@ -501,30 +555,37 @@ func (r *CdnosReconciler) reconcileRBAC(ctx context.Context, cdnos *cdnosv1.Cdno
 	saName := cdnos.Name
 	roleName := fmt.Sprintf("%s-svc-reader", cdnos.Name)
 	rbName := roleName
+	commonLabels := map[string]string{
+		"app":  cdnos.Name,
+		"topo": cdnos.Namespace,
+	}
 
-	// ServiceAccount: try create first (avoids needing get/list permissions)
-	sa := corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      saName,
-			Namespace: cdnos.Namespace,
-			Labels: map[string]string{
-				"app":  cdnos.Name,
-				"topo": cdnos.Namespace,
+	// ServiceAccount: Get-then-Create. The default client reads from the
+	// informer cache so Get is essentially free; this avoids a guaranteed
+	// AlreadyExists round-trip to the API server on every reconcile.
+	var existingSA corev1.ServiceAccount
+	err := r.Get(ctx, types.NamespacedName{Name: saName, Namespace: cdnos.Namespace}, &existingSA)
+	switch {
+	case apierrors.IsNotFound(err):
+		sa := corev1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      saName,
+				Namespace: cdnos.Namespace,
+				Labels:    commonLabels,
 			},
-		},
-	}
-	if err := ctrl.SetControllerReference(cdnos, &sa, r.Scheme); err != nil {
-		return "", err
-	}
-	if err := r.Create(ctx, &sa); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
+		}
+		if err := ctrl.SetControllerReference(cdnos, &sa, r.Scheme); err != nil {
 			return "", err
 		}
-	} else {
+		if err := r.Create(ctx, &sa); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", err
+		}
 		log.Info("created serviceaccount", "name", saName)
+	case err != nil:
+		return "", err
 	}
 
-	// Role allowing restricted access to the Cdnos service in this namespace
+	// Role allowing restricted access to the Cdnos service in this namespace.
 	// Limit to only getting the specific Service created for this Cdnos instance,
 	// which is sufficient to read the MetalLB-assigned VIP from status.
 	svcName := fmt.Sprintf("service-%s", cdnos.Name)
@@ -536,60 +597,70 @@ func (r *CdnosReconciler) reconcileRBAC(ctx context.Context, cdnos *cdnosv1.Cdno
 			Verbs:         []string{"get"},
 		},
 	}
-	role := rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      roleName,
-			Namespace: cdnos.Namespace,
-			Labels: map[string]string{
-				"app":  cdnos.Name,
-				"topo": cdnos.Namespace,
+	var existingRole rbacv1.Role
+	err = r.Get(ctx, types.NamespacedName{Name: roleName, Namespace: cdnos.Namespace}, &existingRole)
+	switch {
+	case apierrors.IsNotFound(err):
+		role := rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      roleName,
+				Namespace: cdnos.Namespace,
+				Labels:    commonLabels,
 			},
-		},
-		Rules: desiredRules,
-	}
-	if err := ctrl.SetControllerReference(cdnos, &role, r.Scheme); err != nil {
-		return "", err
-	}
-	if err := r.Create(ctx, &role); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
+			Rules: desiredRules,
+		}
+		if err := ctrl.SetControllerReference(cdnos, &role, r.Scheme); err != nil {
 			return "", err
 		}
-	} else {
+		if err := r.Create(ctx, &role); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", err
+		}
 		log.Info("created role", "name", roleName)
+	case err != nil:
+		return "", err
+	default:
+		if !equality.Semantic.DeepEqual(existingRole.Rules, desiredRules) {
+			existingRole.Rules = desiredRules
+			if err := r.Update(ctx, &existingRole); err != nil {
+				return "", err
+			}
+			log.Info("updated role rules", "name", roleName)
+		}
 	}
 
 	// RoleBinding to bind the ServiceAccount to the Role
-	rb := rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      rbName,
-			Namespace: cdnos.Namespace,
-			Labels: map[string]string{
-				"app":  cdnos.Name,
-				"topo": cdnos.Namespace,
-			},
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      rbacv1.ServiceAccountKind,
-				Name:      saName,
+	var existingRB rbacv1.RoleBinding
+	err = r.Get(ctx, types.NamespacedName{Name: rbName, Namespace: cdnos.Namespace}, &existingRB)
+	switch {
+	case apierrors.IsNotFound(err):
+		rb := rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      rbName,
 				Namespace: cdnos.Namespace,
+				Labels:    commonLabels,
 			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "Role",
-			Name:     roleName,
-		},
-	}
-	if err := ctrl.SetControllerReference(cdnos, &rb, r.Scheme); err != nil {
-		return "", err
-	}
-	if err := r.Create(ctx, &rb); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
+			Subjects: []rbacv1.Subject{
+				{
+					Kind:      rbacv1.ServiceAccountKind,
+					Name:      saName,
+					Namespace: cdnos.Namespace,
+				},
+			},
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "Role",
+				Name:     roleName,
+			},
+		}
+		if err := ctrl.SetControllerReference(cdnos, &rb, r.Scheme); err != nil {
 			return "", err
 		}
-	} else {
+		if err := r.Create(ctx, &rb); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", err
+		}
 		log.Info("created rolebinding", "name", rbName)
+	case err != nil:
+		return "", err
 	}
 
 	return saName, nil
@@ -641,6 +712,7 @@ func CombineResourceRequirements(kv map[string]string, req2 corev1.ResourceRequi
 
 // This function is responsible for reconciling the service
 func (r *CdnosReconciler) reconcileService(ctx context.Context, cdnos *cdnosv1.Cdnos) error {
+	log := log.FromContext(ctx)
 	var service corev1.Service
 	svcName := fmt.Sprintf("service-%s", cdnos.Name)
 
@@ -656,6 +728,13 @@ func (r *CdnosReconciler) reconcileService(ctx context.Context, cdnos *cdnosv1.C
 		}
 		service.Spec = corev1.ServiceSpec{
 			Type: corev1.ServiceTypeLoadBalancer,
+			// MetalLB assigns the VIP from its IPAddressPool and does not
+			// use the per-Service NodePort. Disabling NodePort allocation
+			// removes the cluster's default ~2.7K NodePort cap (range
+			// 30000-32767) as a scale ceiling and avoids hot-looping
+			// "failed to allocate a nodePort: range is full" errors when
+			// many Services exist.
+			AllocateLoadBalancerNodePorts: pointer.Bool(false),
 			Selector: map[string]string{
 				"app":  cdnos.Name,
 				"topo": cdnos.Namespace,
@@ -668,15 +747,10 @@ func (r *CdnosReconciler) reconcileService(ctx context.Context, cdnos *cdnosv1.C
 	} else if err != nil {
 		return err
 	}
-	service.Spec.Ports = []corev1.ServicePort{}
-	for name, p := range cdnos.Spec.Ports {
-		service.Spec.Ports = append(service.Spec.Ports, corev1.ServicePort{
-			Name:       name,
-			Port:       p.OuterPort,
-			Protocol:   corev1.ProtocolTCP,
-			TargetPort: intstr.FromInt(int(p.InnerPort)),
-		})
-	}
+
+	oldSpec := service.Spec.DeepCopy()
+	service.Spec.Ports = sortedServicePorts(cdnos.Spec.Ports)
+
 	if len(cdnos.Spec.Ports) == 0 && newService {
 		return nil
 	}
@@ -684,18 +758,53 @@ func (r *CdnosReconciler) reconcileService(ctx context.Context, cdnos *cdnosv1.C
 		return r.Delete(ctx, &service)
 	}
 	if newService {
-		return r.Create(ctx, &service)
+		// Tolerate IsAlreadyExists from a concurrent reconcile worker
+		// (or a previous reconcile of the same Cdnos racing the cache
+		// refresh): the Service watch will re-queue us and the next
+		// reconcile takes the Get + Update path.
+		if err := r.Create(ctx, &service); err != nil && !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+		return nil
 	}
-
+	if equality.Semantic.DeepEqual(oldSpec, &service.Spec) {
+		log.V(1).Info("service unchanged, doing nothing")
+		return nil
+	}
 	return r.Update(ctx, &service)
+}
+
+func sortedServicePorts(ports map[string]cdnosv1.ServicePort) []corev1.ServicePort {
+	if len(ports) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(ports))
+	for name := range ports {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]corev1.ServicePort, 0, len(names))
+	for _, name := range names {
+		p := ports[name]
+		out = append(out, corev1.ServicePort{
+			Name:       name,
+			Port:       p.OuterPort,
+			Protocol:   corev1.ProtocolTCP,
+			TargetPort: intstr.FromInt(int(p.InnerPort)),
+		})
+	}
+	return out
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CdnosReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&cdnosv1.Cdnos{}).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Service{}).
-		Owns(&corev1.Secret{}).
-		Complete(r)
+		Owns(&corev1.Secret{})
+	if r.MaxConcurrentReconciles > 0 {
+		b = b.WithOptions(controllerruntime.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles})
+	}
+	return b.Complete(r)
 }

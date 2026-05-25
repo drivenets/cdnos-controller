@@ -625,7 +625,7 @@ metadata:
   name: cdnos-controller-controller-manager
   namespace: cdnos-controller-system
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       control-plane: controller-manager
@@ -666,7 +666,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: public.ecr.aws/dn/cdnos-controller:1.7.9
+        image: public.ecr.aws/drivenets/cdnos-controller:1.8.0
         livenessProbe:
           httpGet:
             path: /healthz
@@ -683,10 +683,10 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 1024Mi
+            memory: 512Mi
           requests:
             cpu: 10m
-            memory: 1024Mi
+            memory: 128Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
