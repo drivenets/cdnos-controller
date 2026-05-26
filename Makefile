@@ -47,6 +47,19 @@ help: ## Display this help.
 .PHONY: generate-manifest
 generate-manifest: manifests kustomize ## Generate centralized manifest
 	$(KUSTOMIZE) build config/default > config/manifests/manifest.yaml
+	# Mirror to manifest/ so the stable install URL
+	# (https://raw.githubusercontent.com/drivenets/cdnos-controller/main/manifest/controllers_cdnos_manifest.yaml)
+	# serves the real manifest. raw.githubusercontent.com does not resolve
+	# symlinks, so this must be a regular file, not a symlink.
+	cp config/manifests/manifest.yaml manifest/controllers_cdnos_manifest.yaml
+
+.PHONY: verify-manifest
+verify-manifest: generate-manifest ## Fail if generated manifests are out of sync with checked-in copies.
+	@if ! git diff --quiet -- config/manifests/manifest.yaml manifest/controllers_cdnos_manifest.yaml; then \
+		echo "ERROR: manifests are out of sync. Run 'make generate-manifest' and commit the result."; \
+		git diff -- config/manifests/manifest.yaml manifest/controllers_cdnos_manifest.yaml; \
+		exit 1; \
+	fi
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
