@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -46,9 +47,14 @@ type CdnosReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	APIReader client.Reader
+	// Recorder emits k8s Events (e.g. for meshnet detect-and-heal).
+	Recorder record.EventRecorder
 	// MaxConcurrentReconciles controls the number of concurrent reconciles.
 	// If <= 0, controller-runtime's default (1) is used.
 	MaxConcurrentReconciles int
+	// MeshnetHeal configures detect-and-heal for the meshnet new-node wiring
+	// race (AR-65093).
+	MeshnetHeal MeshnetHealConfig
 }
 
 //+kubebuilder:rbac:groups=cdnos.dev.drivenets.net,resources=cdnoss,verbs=get;list;watch;create;update;patch;delete
@@ -57,6 +63,8 @@ type CdnosReconciler struct {
 //+kubebuilder:rbac:groups=core,resources=pods;services;secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networkop.co.uk,resources=topologies,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -131,9 +139,17 @@ func (r *CdnosReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 
+	// Detect-and-heal the meshnet new-node wiring race (AR-65093): recreate a
+	// pod that meshnet never wired so its CNI ADD re-runs once meshnet is ready.
+	healResult, err := r.reconcileMeshnetHeal(ctx, cdnos, pod)
+	if err != nil {
+		log.Error(err, "unable to reconcile meshnet heal")
+		return ctrl.Result{}, err
+	}
+
 	log.V(1).Info("Cdnos reconciled", "Name", cdnos.Name, "Image", cdnos.Spec.Image, "Namespace", cdnos.Namespace)
 
-	return ctrl.Result{}, nil
+	return healResult, nil
 }
 
 // This is the function that is responsible for creating the tls secret
