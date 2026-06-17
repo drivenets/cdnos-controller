@@ -473,6 +473,14 @@ rules:
   - patch
   - update
 - apiGroups:
+  - networkop.co.uk
+  resources:
+  - topologies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - rolebindings

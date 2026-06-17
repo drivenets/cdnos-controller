@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -55,6 +56,11 @@ func main() {
 	var maxConcurrentReconciles int
 	var kubeQPS float64
 	var kubeBurst int
+	healDefaults := controller.DefaultMeshnetHealConfig()
+	var meshnetHealEnabled bool
+	var meshnetHealGrace time.Duration
+	var meshnetHealMaxAttempts int
+	var meshnetHealBackoff time.Duration
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8084", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8085", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
@@ -66,6 +72,14 @@ func main() {
 		"Maximum queries-per-second to the Kubernetes API server (client-side rate limit).")
 	flag.IntVar(&kubeBurst, "kube-api-burst", 200,
 		"Maximum burst for throttle to the Kubernetes API server.")
+	flag.BoolVar(&meshnetHealEnabled, "meshnet-heal-enabled", healDefaults.Enabled,
+		"Detect Cdnos pods that meshnet never wired (the new-node CNI race, AR-65093) and heal them by recreating the pod.")
+	flag.DurationVar(&meshnetHealGrace, "meshnet-heal-grace", healDefaults.GracePeriod,
+		"How long a pod must be Running-but-under-wired before meshnet detect-and-heal recreates it.")
+	flag.IntVar(&meshnetHealMaxAttempts, "meshnet-heal-max-attempts", healDefaults.MaxAttempts,
+		"Maximum number of times meshnet detect-and-heal recreates a single pod before giving up and emitting a Warning.")
+	flag.DurationVar(&meshnetHealBackoff, "meshnet-heal-backoff", healDefaults.Backoff,
+		"Minimum delay between successive meshnet detect-and-heal attempts on the same pod.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -97,7 +111,14 @@ func main() {
 		Client:                  mgr.GetClient(),
 		Scheme:                  mgr.GetScheme(),
 		APIReader:               mgr.GetAPIReader(),
+		Recorder:                mgr.GetEventRecorderFor("cdnos-controller"),
 		MaxConcurrentReconciles: maxConcurrentReconciles,
+		MeshnetHeal: controller.MeshnetHealConfig{
+			Enabled:     meshnetHealEnabled,
+			GracePeriod: meshnetHealGrace,
+			MaxAttempts: meshnetHealMaxAttempts,
+			Backoff:     meshnetHealBackoff,
+		},
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cdnos")
 		os.Exit(1)
