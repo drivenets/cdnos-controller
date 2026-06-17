@@ -294,8 +294,38 @@ func TestReconcileMeshnetHeal_DisabledNoop(t *testing.T) {
 	}
 }
 
-func TestReconcileMeshnetHeal_PendingPodNoop(t *testing.T) {
+// An under-wired pod stuck in Pending/Init (KNE init-wait loops forever
+// waiting for the missing interfaces) must heal after the grace period, since
+// it never reaches Running.
+func TestReconcileMeshnetHeal_PendingUnderWiredHealsAfterGrace(t *testing.T) {
 	cdnos, pod, topo := fixtures("r0", "ns", 2, "", "", time.Now().Add(-5*time.Minute))
+	pod.Status.Phase = corev1.PodPending
+	r, rec := newReconciler(cdnos, pod, topo)
+
+	res, err := r.reconcileMeshnetHeal(context.Background(), cdnos, pod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.RequeueAfter != r.MeshnetHeal.GracePeriod {
+		t.Errorf("RequeueAfter=%v, want %v", res.RequeueAfter, r.MeshnetHeal.GracePeriod)
+	}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, &corev1.Pod{}); !apierrors.IsNotFound(err) {
+		t.Errorf("expected under-wired Pending pod to be deleted, got err=%v", err)
+	}
+	got := &cdnosv1.Cdnos{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, got); err != nil {
+		t.Fatalf("get cdnos: %v", err)
+	}
+	if got.Annotations[healAttemptsAnnotation] != "1" {
+		t.Errorf("attempts annotation=%q, want 1", got.Annotations[healAttemptsAnnotation])
+	}
+	assertEvent(t, rec, healReasonRecreate)
+}
+
+// An under-wired Pending pod still within the grace period must not be touched
+// (it may merely be starting up).
+func TestReconcileMeshnetHeal_PendingWithinGraceNoDelete(t *testing.T) {
+	cdnos, pod, topo := fixtures("r0", "ns", 2, "", "", time.Now().Add(-10*time.Second))
 	pod.Status.Phase = corev1.PodPending
 	r, _ := newReconciler(cdnos, pod, topo)
 
@@ -303,11 +333,48 @@ func TestReconcileMeshnetHeal_PendingPodNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.RequeueAfter != 0 {
-		t.Errorf("pending pod should not requeue, got %v", res.RequeueAfter)
+	if res.RequeueAfter <= 0 {
+		t.Errorf("expected a positive requeue while within grace, got %v", res.RequeueAfter)
 	}
 	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, &corev1.Pod{}); err != nil {
-		t.Errorf("pending pod must not be deleted, got err=%v", err)
+		t.Errorf("Pending pod within grace must not be deleted, got err=%v", err)
+	}
+}
+
+// A normally-starting pod (Pending/ContainerCreating) for which meshnet HAS
+// already run - status.net_ns set - must never be healed, even past the grace
+// period. This guards against deleting healthy pods that are simply still
+// starting their containers.
+func TestReconcileMeshnetHeal_PendingButWiredNoDelete(t *testing.T) {
+	cdnos, pod, topo := fixtures("r0", "ns", 2, "/proc/1/ns/net", "10.0.0.1", time.Now().Add(-5*time.Minute))
+	pod.Status.Phase = corev1.PodPending
+	r, _ := newReconciler(cdnos, pod, topo)
+
+	if _, err := r.reconcileMeshnetHeal(context.Background(), cdnos, pod); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, &corev1.Pod{}); err != nil {
+		t.Errorf("wired (but still starting) pod must not be deleted, got err=%v", err)
+	}
+}
+
+// Terminal pods (Succeeded/Failed) are never healed.
+func TestReconcileMeshnetHeal_TerminalPodNoop(t *testing.T) {
+	for _, phase := range []corev1.PodPhase{corev1.PodSucceeded, corev1.PodFailed} {
+		cdnos, pod, topo := fixtures("r0", "ns", 2, "", "", time.Now().Add(-5*time.Minute))
+		pod.Status.Phase = phase
+		r, _ := newReconciler(cdnos, pod, topo)
+
+		res, err := r.reconcileMeshnetHeal(context.Background(), cdnos, pod)
+		if err != nil {
+			t.Fatalf("phase %s: unexpected error: %v", phase, err)
+		}
+		if res.RequeueAfter != 0 {
+			t.Errorf("phase %s: should not requeue, got %v", phase, res.RequeueAfter)
+		}
+		if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, &corev1.Pod{}); err != nil {
+			t.Errorf("phase %s: terminal pod must not be deleted, got err=%v", phase, err)
+		}
 	}
 }
 

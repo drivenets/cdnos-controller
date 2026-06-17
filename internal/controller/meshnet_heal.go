@@ -169,13 +169,25 @@ func (r *CdnosReconciler) reconcileMeshnetHeal(ctx context.Context, cdnos *cdnos
 	log := log.FromContext(ctx)
 
 	// Re-read the pod from the cache so we observe the current truth: a pod
-	// that reconcilePod just created (Pending) or just deleted for a spec
-	// change (NotFound / terminating) must not be touched here.
+	// that reconcilePod just deleted for a spec change (NotFound / terminating)
+	// must not be touched here.
 	fresh := &corev1.Pod{}
 	if err := r.Get(ctx, types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}, fresh); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if fresh.DeletionTimestamp != nil || fresh.Status.Phase != corev1.PodRunning {
+	// Skip terminating and terminal pods. We deliberately do NOT require
+	// PodRunning: KNE's init-wait init container holds an under-wired mcDNOS
+	// pod in Pending/Init indefinitely (it loops forever waiting for the
+	// missing interfaces), so it never reaches Running. Acting on Pending is
+	// safe because the under-wired signal is phase-independent: meshnet's CNI
+	// plugin stamps status.net_ns via SetAlive at CNI ADD (sandbox creation),
+	// before any init/main container runs - so a Pending pod with spec.links
+	// and an empty status.net_ns definitively means meshnet never ran (the
+	// race), not a pod that is merely still pulling/starting. The grace period
+	// and bounded-attempts/backoff guardrails below still apply unchanged.
+	if fresh.DeletionTimestamp != nil ||
+		fresh.Status.Phase == corev1.PodSucceeded ||
+		fresh.Status.Phase == corev1.PodFailed {
 		return ctrl.Result{}, nil
 	}
 
