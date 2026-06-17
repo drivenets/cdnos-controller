@@ -206,6 +206,7 @@ func TestReconcileMeshnetHeal_RecreatesUnderWiredPod(t *testing.T) {
 
 func TestReconcileMeshnetHeal_WiredPodClearsState(t *testing.T) {
 	cdnos, pod, topo := fixtures("r0", "ns", 2, "/proc/1/ns/net", "10.0.0.1", time.Now().Add(-5*time.Minute))
+	markPodWired(pod)
 	cdnos.Annotations = map[string]string{
 		healAttemptsAnnotation:    "2",
 		healLastAttemptAnnotation: time.Now().Format(time.RFC3339),
@@ -341,13 +342,20 @@ func TestReconcileMeshnetHeal_PendingWithinGraceNoDelete(t *testing.T) {
 	}
 }
 
-// A normally-starting pod (Pending/ContainerCreating) for which meshnet HAS
-// already run - status.net_ns set - must never be healed, even past the grace
-// period. This guards against deleting healthy pods that are simply still
-// starting their containers.
+// A normally-starting pod that is still Pending (e.g. pulling its main
+// container image) but whose init-wait has already completed - all expected
+// interfaces are present - must never be healed, even past the grace period.
+// This guards against deleting healthy pods that are simply still starting
+// their containers.
 func TestReconcileMeshnetHeal_PendingButWiredNoDelete(t *testing.T) {
 	cdnos, pod, topo := fixtures("r0", "ns", 2, "/proc/1/ns/net", "10.0.0.1", time.Now().Add(-5*time.Minute))
+	// init-wait completed (all interfaces wired) but the pod has not reached
+	// Running yet because the main container is still starting.
 	pod.Status.Phase = corev1.PodPending
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{
+		Name:  "init",
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+	}}
 	r, _ := newReconciler(cdnos, pod, topo)
 
 	if _, err := r.reconcileMeshnetHeal(context.Background(), cdnos, pod); err != nil {
@@ -378,6 +386,97 @@ func TestReconcileMeshnetHeal_TerminalPodNoop(t *testing.T) {
 	}
 }
 
+// A PARTIALLY-wired pod (meshnet ran - net_ns set - but did not finish wiring
+// every link, so init-wait is still blocking) must heal after the grace
+// period. This is the AR-65093 50-node-scale case (n35/n37 stuck at 2/4): the
+// old net_ns-only signal treated it as healthy and never recreated it.
+func TestReconcileMeshnetHeal_PartialWiredHealsAfterGrace(t *testing.T) {
+	// net_ns + src_ip set => meshnet ran; pod still Pending with init-wait
+	// running => fewer than expected interfaces are present.
+	cdnos, pod, topo := fixtures("r0", "ns", 4, "/proc/1/ns/net", "10.0.0.1", time.Now().Add(-5*time.Minute))
+	r, rec := newReconciler(cdnos, pod, topo)
+
+	res, err := r.reconcileMeshnetHeal(context.Background(), cdnos, pod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.RequeueAfter != r.MeshnetHeal.GracePeriod {
+		t.Errorf("RequeueAfter=%v, want %v", res.RequeueAfter, r.MeshnetHeal.GracePeriod)
+	}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, &corev1.Pod{}); !apierrors.IsNotFound(err) {
+		t.Errorf("expected partially-wired pod to be deleted, got err=%v", err)
+	}
+	got := &cdnosv1.Cdnos{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, got); err != nil {
+		t.Fatalf("get cdnos: %v", err)
+	}
+	if got.Annotations[healAttemptsAnnotation] != "1" {
+		t.Errorf("attempts annotation=%q, want 1", got.Annotations[healAttemptsAnnotation])
+	}
+	assertEvent(t, rec, healReasonRecreate)
+}
+
+// A partially-wired pod still within the grace period must not be touched: it
+// may merely be wiring behind a transiently-slow peer.
+func TestReconcileMeshnetHeal_PartialWithinGraceSkip(t *testing.T) {
+	cdnos, pod, topo := fixtures("r0", "ns", 4, "/proc/1/ns/net", "10.0.0.1", time.Now().Add(-10*time.Second))
+	r, _ := newReconciler(cdnos, pod, topo)
+
+	res, err := r.reconcileMeshnetHeal(context.Background(), cdnos, pod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.RequeueAfter <= 0 {
+		t.Errorf("expected a positive requeue while within grace, got %v", res.RequeueAfter)
+	}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, &corev1.Pod{}); err != nil {
+		t.Errorf("partially-wired pod within grace must not be deleted, got err=%v", err)
+	}
+}
+
+// A fully-wired pod (init-wait passed) must be a no-op even though its Topology
+// may still carry stale status.skipped entries (which is why skipped is not
+// used as the wired signal).
+func TestReconcileMeshnetHeal_FullyWiredSkip(t *testing.T) {
+	cdnos, pod, topo := fixtures("r0", "ns", 4, "/proc/1/ns/net", "10.0.0.1", time.Now().Add(-5*time.Minute))
+	markPodWired(pod)
+	// Stale skipped entries on an otherwise fully-wired pod must not trigger a heal.
+	_ = unstructured.SetNestedSlice(topo.Object, []interface{}{
+		map[string]interface{}{"link_id": int64(1), "pod_name": "peer"},
+		map[string]interface{}{"link_id": int64(2), "pod_name": "peer"},
+	}, "status", "skipped")
+	r, _ := newReconciler(cdnos, pod, topo)
+
+	res, err := r.reconcileMeshnetHeal(context.Background(), cdnos, pod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.RequeueAfter != 0 {
+		t.Errorf("fully-wired pod should not requeue, got %v", res.RequeueAfter)
+	}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, &corev1.Pod{}); err != nil {
+		t.Errorf("fully-wired pod must not be deleted, got err=%v", err)
+	}
+}
+
+// A pod whose Topology has no links (expected == 0) is not a wired meshnet pod
+// and must be ignored even if it is stuck in init.
+func TestReconcileMeshnetHeal_NoLinkSkip(t *testing.T) {
+	cdnos, pod, topo := fixtures("r0", "ns", 0, "", "", time.Now().Add(-5*time.Minute))
+	r, _ := newReconciler(cdnos, pod, topo)
+
+	res, err := r.reconcileMeshnetHeal(context.Background(), cdnos, pod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.RequeueAfter != 0 {
+		t.Errorf("no-link pod should not requeue, got %v", res.RequeueAfter)
+	}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "r0", Namespace: "ns"}, &corev1.Pod{}); err != nil {
+		t.Errorf("no-link pod must not be deleted, got err=%v", err)
+	}
+}
+
 // --- helpers ---
 
 func newTopology(name, ns string, links []interface{}, netNs, srcIP string) *unstructured.Unstructured {
@@ -401,6 +500,10 @@ func newTopology(name, ns string, links []interface{}, netNs, srcIP string) *uns
 	return u
 }
 
+// fixtures builds a Cdnos, an under-wired pod, and its Topology. By default the
+// pod is modeled as under-wired: Pending with KNE's init-wait init container
+// still Running (so podWiringComplete is false), which matches a pod stuck in
+// Init:0/1. Tests that need a fully-wired pod call markPodWired.
 func fixtures(name, ns string, nLinks int, netNs, srcIP string, startedAt time.Time) (*cdnosv1.Cdnos, *corev1.Pod, *unstructured.Unstructured) {
 	cdnos := &cdnosv1.Cdnos{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
@@ -409,9 +512,14 @@ func fixtures(name, ns string, nLinks int, netNs, srcIP string, startedAt time.T
 	start := metav1.NewTime(startedAt)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec:       corev1.PodSpec{InitContainers: []corev1.Container{{Name: "init"}}},
 		Status: corev1.PodStatus{
-			Phase:     corev1.PodRunning,
+			Phase:     corev1.PodPending,
 			StartTime: &start,
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "init",
+				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+			}},
 		},
 	}
 	var links []interface{}
@@ -420,6 +528,16 @@ func fixtures(name, ns string, nLinks int, netNs, srcIP string, startedAt time.T
 	}
 	topo := newTopology(name, ns, links, netNs, srcIP)
 	return cdnos, pod, topo
+}
+
+// markPodWired marks the pod as fully wired (init-wait passed): it has reached
+// Running with its init container terminated successfully.
+func markPodWired(pod *corev1.Pod) {
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{
+		Name:  "init",
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+	}}
 }
 
 func newReconciler(objs ...client.Object) (*CdnosReconciler, *record.FakeRecorder) {
