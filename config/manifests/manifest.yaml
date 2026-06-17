@@ -681,7 +681,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: public.ecr.aws/drivenets/cdnos-controller:1.9.0
+        image: dapdev.azurecr.io/cdnos-controller:detect-and-heal-partial-bcb3cdc
         livenessProbe:
           httpGet:
             path: /healthz
