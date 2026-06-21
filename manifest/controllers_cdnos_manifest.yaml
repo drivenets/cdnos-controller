@@ -434,6 +434,13 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
   - pods
   - secrets
   - serviceaccounts
@@ -472,13 +479,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
 - apiGroups:
   - networkop.co.uk
   resources:
@@ -681,7 +681,7 @@ spec:
         - --leader-elect
         command:
         - /manager
-        image: dapdev.azurecr.io/cdnos-controller:detect-and-heal-partial-bcb3cdc
+        image: public.ecr.aws/drivenets/cdnos-controller:1.9.1
         livenessProbe:
           httpGet:
             path: /healthz
